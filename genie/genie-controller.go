@@ -21,8 +21,8 @@ package genie
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/Huawei-PaaS/CNI-Genie/utils"
 	"github.com/Huawei-PaaS/CNI-Genie/plugins"
+	"github.com/Huawei-PaaS/CNI-Genie/utils"
 	"github.com/containernetworking/cni/libcni"
 	"github.com/containernetworking/cni/pkg/ipam"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -454,6 +454,9 @@ func createConfIfBinaryExists(cniName string) ([]byte, error) {
 	switch cniName {
 	case plugins.BridgeNet:
 		pluginObj = plugins.GetBridgeConfig()
+		break
+	case plugins.SriovNet:
+		pluginObj = plugins.GetSriovConfig()
 		break
 	default:
 		return nil, fmt.Errorf("CNI Genie Error user requested for unsupported plugin type %s. Only supported are (Romana, weave, canal, calico, flannel, bridge)", cniName)

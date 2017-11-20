@@ -93,6 +93,11 @@ type NetConf struct {
 	HairpinMode      bool   `json:"hairpinMode,omitempty"`
 	IsGateway        bool   `json:"isGateway,omitempty"`
 
+	Vf     int    `json:"vf,omitempty"`
+	Vlan   int    `json:"vlan,omitempty"`
+	Mac    string `json:"mac,omitempty"`
+	Master string `json:"master"`
+
 	//added for romana
 	RomanaRoot       string `json:"romana_root"`
 	SegmentLabelName string `json:"segment_label_name"`
