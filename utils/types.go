@@ -54,6 +54,18 @@ type CNIArgs struct {
 	StdinData   []byte
 }
 
+type NetConf struct {
+	types.NetConf
+	Policy     v1.Policy     `json:"policy"`
+	Kubernetes v1.Kubernetes `json:"kubernetes"`
+}
+
+type NetConfList struct {
+	Name    string
+	Plugins []types.NetConf `json:"plugins"`
+}
+
+/*
 // NetConf stores the common network config for Calico CNI plugin
 type NetConf struct {
 	CNIVersion     string                 `json:"cniVersion"`
@@ -91,6 +103,7 @@ type NetConf struct {
 	RomanaRoot       string `json:"romana_root"`
 	SegmentLabelName string `json:"segment_label_name"`
 }
+*/
 
 // K8sArgs is the valid CNI_ARGS used for Kubernetes
 type K8sArgs struct {

@@ -19,6 +19,7 @@ networking or pod multi-IP based networking.
 package genie
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -405,16 +406,31 @@ func parseCNIAnnotations(annot map[string]string, client *kubernetes.Clientset, 
 	return finalAnnots, nil
 }
 
-func ParseCNIConfFromFile(filename string) (utils.NetConf, error) {
-	conf := utils.NetConf{}
+func ParseCNIConfFromFile(filename string) (string, []byte, error) {
+	var pluginType string
 	bytes, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return conf, fmt.Errorf("error reading %s: %s", filename, err)
+		return "", nil, fmt.Errorf("error reading %s: %s", filename, err)
 	}
-	if err := json.Unmarshal(bytes, &conf); err != nil {
-		return conf, fmt.Errorf("failed to load netconf: %v", err)
+
+	fileExt := filename[strings.LastIndex(filename, ".")+1:]
+	switch fileExt {
+	case "conf":
+		conf := utils.NetConf{}
+		if err := json.Unmarshal(bytes, &conf); err != nil {
+			return "", nil, fmt.Errorf("failed to load netconf: %v", err)
+		}
+		pluginType = conf.Type
+
+	case "conflist":
+		conf := utils.NetConfList{}
+		if err := json.Unmarshal(bytes, &conf); err != nil {
+			return "", nil, fmt.Errorf("failed to load netconf: %v", err)
+		}
+		pluginType = conf.Plugins[0].Type
 	}
-	return conf, nil
+
+	return pluginType, bytes, nil
 }
 
 // checkPluginBinary checks for existence of plugin binary file
@@ -486,7 +502,7 @@ func addNetwork(conf utils.NetConf, intfId int, cniName string, cniArgs utils.CN
 	}
 	fmt.Fprintf(os.Stderr, "CNI Genie cniName=%v\n", cniName)
 
-	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf"})
+	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf", ".conflist"})
 	fmt.Fprintf(os.Stderr, "CNI Genie files =%v\n", files)
 	if err != nil {
 		return nil, err
@@ -500,20 +516,16 @@ func addNetwork(conf utils.NetConf, intfId int, cniName string, cniArgs utils.CN
 			confFileFound = true
 			// Get the configuration info from the file. If the file does not
 			// contain valid conf, then skip it and check for another
-			confFromFile, err := ParseCNIConfFromFile(confFile)
-			fmt.Fprintf(os.Stderr, "CNI Genie confFromFile =%+v\n", confFromFile)
+			pluginType, bytes, err := ParseCNIConfFromFile(confFile)
+			//			fmt.Fprintf(os.Stderr, "CNI Genie confFromFile =%+v\n", confFromFile)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "CNI Genie Error loading CNI config file %s= %v\n", confFile, err)
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "CNI Genie cniName file found!!!!!! confFromFile.Type =%v\n", confFromFile.Type)
+			fmt.Fprintf(os.Stderr, "CNI Genie cniName file found!!!!!! confFromFile.Type =%v\n", pluginType)
 
-			stdinData, err = json.Marshal(&confFromFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "CNI Genie Error while marshalling conf from %s: %v. Skipping the file.\n", confFile, err)
-				continue
-			}
-			cniType = confFromFile.Type
+			cniType = pluginType
+			stdinData = bytes
 			break
 		}
 	}
@@ -528,6 +540,13 @@ func addNetwork(conf utils.NetConf, intfId int, cniName string, cniArgs utils.CN
 		cniType = cniName
 	}
 
+	buffer := new(bytes.Buffer)
+	if e := json.Compact(buffer, stdinData); e != nil {
+		fmt.Fprintf(os.Stderr, "CNI Genie stdinData= %#v\n", string(stdinData))
+	} else {
+		fmt.Fprintf(os.Stderr, "CNI Genie stdinData= %v\n", buffer)
+	}
+
 	result, err = ipam.ExecAdd(cniType, stdinData)
 	if err != nil {
 		return nil, err
@@ -539,13 +558,12 @@ func addNetwork(conf utils.NetConf, intfId int, cniName string, cniArgs utils.CN
 
 // deleteNetwork is a core function that delegates call to release IP from a Container Networking Solution (CNI Plugin)
 func deleteNetwork(conf utils.NetConf, intfId int, cniName string, cniArgs utils.CNIArgs) error {
-	var stdinData []byte
 
 	if os.Setenv("CNI_IFNAME", "eth"+strconv.Itoa(intfId)) != nil {
 		fmt.Fprintf(os.Stderr, "CNI_IFNAME Error\n")
 	}
 
-	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf"})
+	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf", ".conflist"})
 	fmt.Fprintf(os.Stderr, "CNI Genie files =%v\n", files)
 	switch {
 	case err != nil:
@@ -555,18 +573,16 @@ func deleteNetwork(conf utils.NetConf, intfId int, cniName string, cniArgs utils
 	}
 	sort.Strings(files)
 	for _, confFile := range files {
-		confFromFile, err := ParseCNIConfFromFile(confFile)
-		fmt.Fprintf(os.Stderr, "CNI Genie confFromFile =%v\n", confFromFile)
+		pluginType, bytes, err := ParseCNIConfFromFile(confFile)
+		fmt.Fprintf(os.Stderr, "CNI Genie confFromFile =%#v\n", bytes)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "CNI Genie Error loading CNI config file =%v\n", confFile, err)
 			continue
 		}
 		if strings.Contains(confFile, cniName) && cniName != "" {
-			fmt.Fprintf(os.Stderr, "CNI Genie cniName file found!!!!!! confFromFile.Type =%v\n", confFromFile.Type)
+			fmt.Fprintf(os.Stderr, "CNI Genie cniName file found!!!!!! confFromFile.Type =%v\n", pluginType)
 
-			conf = confFromFile
-			stdinData, _ = json.Marshal(&conf)
-			ipamErr := ipam.ExecDel(conf.Type, stdinData)
+			ipamErr := ipam.ExecDel(pluginType, bytes)
 			if ipamErr != nil {
 				return ipamErr
 			}
