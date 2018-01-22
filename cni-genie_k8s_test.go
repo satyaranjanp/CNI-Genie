@@ -450,7 +450,51 @@ var _ = Describe("CNIGenie", func() {
 				Expect("Success").To(Equal("Success"))
 			})
 		})
-	})	
+	})
+	Describe("Add sriov networking for Pod", func() {
+		glog.Info("Inside Check for adding sriov networking")
+		Context("using cni-genie for configuring sriov CNI", func() {
+			name := fmt.Sprintf("nginx-sriov-%d", rand.Uint32())
+
+			It("should succeed sriov networking for pod", func() {
+				annots := make(map[string]string)
+				annots["cni"] = "sriov"
+				_, err := clientset.Pods(TEST_NAMESPACE).Create(&v1.Pod{
+					ObjectMeta: v1.ObjectMeta{
+						Name:        name,
+						Annotations: annots,
+					},
+					Spec: v1.PodSpec{Containers: []v1.Container{{
+						Name:            fmt.Sprintf("container-%s", name),
+						Image:           "nginx:latest",
+						ImagePullPolicy: "IfNotPresent",
+					}}},
+				})
+
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Waiting for the sriov pod to have running status")
+				By("Waiting 10 seconds")
+				time.Sleep(time.Duration(10 * time.Second))
+				pod, err := clientset.Pods(TEST_NAMESPACE).Get(name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				glog.Info("pod status =", string(pod.Status.Phase))
+				Expect(string(pod.Status.Phase)).To(Equal("Running"))
+
+				By("Pod was in Running state... Time to delete the sriov pod now...")
+				err = clientset.Pods(TEST_NAMESPACE).Delete(name, &v1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				By("Waiting 5 seconds")
+				time.Sleep(time.Duration(5 * time.Second))
+				By("Check for sriov pod deletion")
+				_, err = clientset.Pods(TEST_NAMESPACE).Get(name, metav1.GetOptions{})
+				if err != nil && errors.IsNotFound(err) {
+					//do nothing pod has already been deleted
+				}
+				Expect("Success").To(Equal("Success"))
+			})
+		})
+	})
 })
 var _ = BeforeSuite(func() {
 	var config *rest.Config
