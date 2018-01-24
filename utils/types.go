@@ -56,40 +56,14 @@ type CNIArgs struct {
 
 // NetConf stores the common network config for Calico CNI plugin
 type NetConf struct {
-	CNIVersion     string                 `json:"cniVersion"`
-	Name           string                 `json:"name"`
-	Type           string                 `json:"type"`
-	IPAM           interface{}            `json:"ipam,omitempty"`
-	MTU            int                    `json:"mtu"`
-	Hostname       string                 `json:"hostname"`
-	DatastoreType  string                 `json:"datastore_type"`
-	EtcdAuthority  string                 `json:"etcd_authority"`
-	EtcdEndpoints  string                 `json:"etcd_endpoints"`
-	LogLevel       string                 `json:"log_level"`
-	Policy         v1.Policy              `json:"policy"`
-	Kubernetes     v1.Kubernetes          `json:"kubernetes"`
-	Args           v1.Args                `json:"args"`
-	EtcdScheme     string                 `json:"etcd_scheme"`
-	EtcdKeyFile    string                 `json:"etcd_key_file"`
-	EtcdCertFile   string                 `json:"etcd_cert_file"`
-	EtcdCaCertFile string                 `json:"etcd_ca_cert_file"`
-	Delegate       map[string]interface{} `json:"delegate"`
-	CalicoSubnet   string                 `json:"calico_subnet"`
-	CanalSubnet    string                 `json:"canal_subnet"`
-	WeaveSubnet    string                 `json:"weave_subnet"`
-	Master         string                 `json:"master"`
-	Mode           string                 `json:"mode"`
-
-	Bridge           string `json:"bridge,omitempty"`
-	IsDefaultGateway bool   `json:"isDefaultGateway,omitempty"`
-	ForceAddress     bool   `json:"forceAddress,omitempty"`
-	IpMasq           bool   `json:"ipMasq,omitempty"`
-	HairpinMode      bool   `json:"hairpinMode,omitempty"`
-	IsGateway        bool   `json:"isGateway,omitempty"`
-
-	//added for romana
-	RomanaRoot       string `json:"romana_root"`
-	SegmentLabelName string `json:"segment_label_name"`
+	CNIVersion    string        `json:"cniVersion"`
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`
+	Hostname      string        `json:"hostname"`
+	DatastoreType string        `json:"datastore_type"`
+	LogLevel      string        `json:"log_level"`
+	Policy        v1.Policy     `json:"policy"`
+	Kubernetes    v1.Kubernetes `json:"kubernetes"`
 }
 
 // K8sArgs is the valid CNI_ARGS used for Kubernetes

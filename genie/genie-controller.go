@@ -194,7 +194,7 @@ func UpdatePodDefinition(intfId int, result types.Result, multiIPPrefAnnot strin
 	}
 
 	if err := json.Unmarshal([]byte(multiIPPrefAnnot), &multiIPPreferences); err != nil {
-		fmt.Errorf("CNI Genie Error parsing MultiIPPreferencesAnnotation = %s\n", err)
+		return multiIPPrefAnnot, fmt.Errorf("CNI Genie Error parsing MultiIPPreferencesAnnotation = %s\n", err)
 	}
 
 	currResult, err := current.NewResultFromResult(result)
@@ -204,7 +204,7 @@ func UpdatePodDefinition(intfId int, result types.Result, multiIPPrefAnnot strin
 
 	multiIPPreferences.MultiEntry = multiIPPreferences.MultiEntry + 1
 	multiIPPreferences.Ips["ip"+strconv.Itoa(intfId+1)] =
-		utils.IPAddressPreferences{currResult.IPs[0].Address.IP.String(), "eth" + strconv.Itoa(intfId)}
+		utils.IPAddressPreferences{Ip: currResult.IPs[0].Address.IP.String(), Interface: "eth" + strconv.Itoa(intfId)}
 
 	tmpMultiIPPreferences, err := json.Marshal(&multiIPPreferences)
 
@@ -335,7 +335,7 @@ func parseCNIAnnotations(annot map[string]string, client *kubernetes.Clientset, 
 	var finalAnnots []string
 
 	if len(annot) == 0 {
-		fmt.Fprintf(os.Stderr, "CNI Genie no annotations is given! Default plugin is weave! annot is %V\n", annot)
+		fmt.Fprintf(os.Stderr, "CNI Genie no annotations is given! Default plugin is weave! annot is %v\n", annot)
 		finalAnnots = []string{"weave"}
 	} else if strings.TrimSpace(annot["cni"]) == "" {
 		networksAnnot := ParsePodAnnotationsForNetworks(client, k8sArgs)
@@ -567,7 +567,7 @@ func deleteNetwork(intfId int, cniName string, cniArgs utils.CNIArgs) error {
 		if strings.Contains(confFile, cniName) && cniName != "" {
 			confFromFile, err := ParseCNIConfFromFile(confFile)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "CNI Genie Error loading CNI config file =%v\n", confFile, err)
+				fmt.Fprintf(os.Stderr, "CNI Genie Error loading CNI config file %s: %v\n", confFile, err)
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "CNI Genie cniName file found!!!!!! confFromFile.Type =%v\n", confFromFile.Plugins[0].Network.Type)

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: nginx-weave
+  name: nginx-bridge
   labels:
     app: web
   annotations:
