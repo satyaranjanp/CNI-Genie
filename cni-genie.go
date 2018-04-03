@@ -30,7 +30,7 @@ func init() {
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
-	fmt.Fprintf(os.Stderr, "CNI Genie cmdDel = %v\n", string(args.StdinData))
+	fmt.Fprintf(os.Stderr, "CNI Genie cmdAdd = %v\n", string(args.StdinData))
 
 	conf, err := genie.ParseCNIConf(args.StdinData)
 
@@ -40,8 +40,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 	cniArgs := genie.PopulateCNIArgs(args)
 	fmt.Fprintf(os.Stderr, "CNI Genie Add IP address\n")
 	result, ipamErr := genie.AddPodNetwork(cniArgs, conf)
-	if ipamErr != nil {
-		return fmt.Errorf("CNI Genie Add IP internal error: %v", ipamErr)
+	if ipamErr != nil || nil == result {
+		return fmt.Errorf("CNI Genie Add IP internal error: %v, result: %s", ipamErr, result)
 	}
 
 	fmt.Fprintf(os.Stderr, "CNI Genie End result= %s\n", result)
