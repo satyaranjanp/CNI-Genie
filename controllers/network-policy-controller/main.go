@@ -50,7 +50,7 @@ func main() {
 
 	exampleClient, err := clientset.NewForConfig(cfg)
 	if err != nil {
-	glog.Fatalf("Error building example clientset: %s", err.Error())
+		glog.Fatalf("Error building example clientset: %s", err.Error())
 	}
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, time.Second*30)
