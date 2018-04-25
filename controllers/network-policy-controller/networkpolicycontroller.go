@@ -35,16 +35,26 @@ import (
 	informers "github.com/Huawei-PaaS/CNI-Genie/controllers/logicalnetwork-pkg/client/informers/externalversions"
 	listers "github.com/Huawei-PaaS/CNI-Genie/controllers/logicalnetwork-pkg/client/listers/network/v1"
 
-	. "github.com/Huawei-PaaS/CNI-Genie/utils"
-	"time"
+	"crypto/md5"
 	"encoding/json"
+	. "github.com/Huawei-PaaS/CNI-Genie/utils"
+	"github.com/coreos/go-iptables/iptables"
+	"k8s.io/apimachinery/pkg/labels"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const (
 	ControllerAgentName = "network-policy-controller"
-	GenieNetworkPolicy = "genieNetworkPolicy"
-	GeniePolicyPrefix = "GeniePolicy"
-	GenieNetworkPrefix = "GenieNetwork"
+	GenieNetworkPolicy  = "genieNetworkPolicy"
+	GeniePolicyPrefix   = "GnPlc-"
+	GenieNetworkPrefix  = "GnNtk-"
+
+	FilterTable  = "filter"
+	ForwardChain = "FORWARD"
+	InputChain   = "INPUT"
+	OutputChain  = "OUTPUT"
 )
 
 type NetworkPolicyController struct {
@@ -60,12 +70,6 @@ type NetworkPolicyController struct {
 	recorder record.EventRecorder
 
 	mutex sync.Mutex
-}
-
-type NetworkPolicyInfo struct {
-	Name string
-	Namespace string
-	Networks map[string][]string
 }
 
 // NewNpcController returns a new network policy controller
@@ -186,8 +190,10 @@ func (npc *NetworkPolicyController) deletePolicy(obj interface{}) {
 		}
 	}
 
-	if n.Annotations != nil && n.Annotations[GeniePolicyPrefix] != "" {
+	if n.Annotations != nil && n.Annotations[GenieNetworkPolicy] != "" {
+		glog.Infof("Before delete: annotation: %v", n.Annotations[GenieNetworkPolicy])
 		npc.enqueueNetworkPolicy(n, "DELETE", n.Annotations[GenieNetworkPolicy])
+		return
 	}
 
 	npc.enqueueNetworkPolicy(n, "DELETE", "")
@@ -254,7 +260,517 @@ func (npc *NetworkPolicyController) processNextWorkItemInQueue() bool {
 	return true
 }
 
-func (npc *NetworkPolicyController) syncHandler(keyaction interface{}) error {
+type NetworkPolicy struct {
+	NetworkSelector string
+	PeerNetworks    string
+}
+
+func createIptableChainName(prefix, suffix string) string {
+	m := md5.Sum([]byte(suffix))
+	return (prefix + fmt.Sprintf("%x", m))[:26]
+}
+
+func (npc *NetworkPolicyController) getCidrFromNetwork(name, namespace string) (string, error) {
+
+	lnw, err := npc.logicalNwLister.LogicalNetworks(namespace).Get(name)
+	if err != nil {
+		return "", err
+	}
+
+	return lnw.Spec.SubSubnet, nil
+
+}
+
+type NetworkPolicyInfo struct {
+	Name      string
+	Namespace string
+	Networks  map[string][]string
+}
+
+func unmarshalKeyActionJson(key string) (map[string]string, error) {
+	var keyaction map[string]string
+	err := json.Unmarshal([]byte(key), &keyaction)
+	if err != nil {
+		return nil, err
+	}
+	return keyaction, nil
+}
+
+func getLogicalNetworksFromAnnotation(annotation string) (map[string][]string, error) {
+	networkPolicies := make([]NetworkPolicy, 0)
+	policyNetworkMap := make(map[string][]string)
+	glog.Infof("In getLogicalNetworksFromAnnotation: annotation: %v",annotation)
+	err := json.Unmarshal([]byte(annotation), &networkPolicies)
+	if err != nil {
+		return nil, fmt.Errorf("Error while unmarshalling annotation: %v", err)
+	}
+
+	for _, policy := range networkPolicies {
+		policyNetworkMap[policy.NetworkSelector] = append(policyNetworkMap[policy.NetworkSelector], strings.Split(policy.PeerNetworks, ",")...)
+	}
+
+	return policyNetworkMap, nil
+}
+
+func (npc *NetworkPolicyController) handleNetworkPolicyAdd(name, namespace string) error {
+	glog.Infof("In handleNetworkPolicyAdd")
+	networkPolicy, err := npc.networkPoliciesLister.NetworkPolicies(namespace).Get(name)
+	if err != nil {
+		return fmt.Errorf("Failed to get network policy object %s in namespace %s: %v", name, namespace, err)
+	}
+
+	networks, err := getLogicalNetworksFromAnnotation(networkPolicy.Annotations[GenieNetworkPolicy])
+	if err != nil {
+		return fmt.Errorf("Error while unmarshalling logical networks info from annotation of policy object %s: %v", networkPolicy.Name, err)
+	}
+
+	iptablesCommandExec, err := iptables.New()
+	if err != nil {
+		glog.Errorf("Iptables command executer intialization failed: %v", err.Error())
+		return fmt.Errorf("Iptables command executer intialization failed: %v", err.Error())
+	}
+
+	nwPolicyChainName := createIptableChainName(GeniePolicyPrefix, name+namespace)
+
+	err = iptablesCommandExec.NewChain("filter", nwPolicyChainName)
+	if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+
+	err = iptablesCommandExec.ClearChain("filter", nwPolicyChainName)
+	if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+
+	for nwSelector, peerNw := range networks {
+		for _, peer := range peerNw {
+			l, err := npc.logicalNwLister.LogicalNetworks(namespace).Get(peer)
+			if err != nil {
+				continue
+			}
+			spec := []string{"-s", l.Spec.SubSubnet, "-j", "ACCEPT"}
+			err = iptablesCommandExec.AppendUnique(FilterTable, nwPolicyChainName, spec...)
+			if err != nil {
+				continue
+			}
+		}
+
+/*		lnChain := createIptableChainName(GenieNetworkPrefix, nwSelector+namespace)
+		rulespec := []string{"-j", nwPolicyChainName}
+		exists, err := iptablesCommandExec.Exists(FilterTable, lnChain, rulespec...)
+		if err != nil {
+			glog.Warningf("Failed to check if logical network (%s) contains network policy (%s) as a rule: %v", nwSelector, name, err.Error())
+			continue
+		}
+		if !exists {
+			err := iptablesCommandExec.Insert(FilterTable, lnChain, 1, rulespec...)
+			if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+				glog.Warningf("Failed to insert network policy (%s) rule in logical network (%s) chain: %v", name, nwSelector, err.Error())
+				continue
+			}
+		}
+*/
+		err = npc.handleLogicalNetworkAdd(nwSelector, namespace)
+		if err != nil {
+			glog.Infof("Skipping handling logical network (%s): %v", nwSelector, err)
+			continue
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("Error synchronizing network policy: name: %s, namesapce: %s; error: %v", name, namespace, err)
+	}
 
 	return nil
+}
+
+func (npc *NetworkPolicyController) handleNetworkPolicyUpdate(name, namespace string) error {
+	return npc.handleNetworkPolicyAdd(name, namespace)
+}
+
+func (npc *NetworkPolicyController) handleNetworkPolicyDelete(name, namespace, annotation string) error {
+	logicalNetworks, err := getLogicalNetworksFromAnnotation(annotation)
+	if err != nil {
+		return err
+	}
+
+	iptablesCommandExec, err := iptables.New()
+	if err != nil {
+		return fmt.Errorf("Iptables command executer intialization failed: %v", err.Error())
+	}
+
+	npChain := createIptableChainName(GeniePolicyPrefix, name+namespace)
+
+	for destNw := range logicalNetworks {
+		// For each destination logical network, search the respective chain in the
+		// iptable and remove the entry for this network policy chain
+		logicalNwChain := createIptableChainName(GenieNetworkPrefix, destNw+namespace)
+		rules, err := iptablesCommandExec.List(FilterTable, logicalNwChain)
+		if err != nil {
+			if err.(*iptables.Error).ExitStatus() != 1 {
+				return fmt.Errorf("Failed to list rules for logical network (%s) chain: %v", destNw, err)
+			} else {
+				glog.Infof("Iptable chain for logical network (%s) does not exist, so skipping.", logicalNwChain)
+				continue
+			}
+		}
+		for i, rule := range rules {
+			if strings.Contains(rule, npChain) {
+				err := iptablesCommandExec.Delete(FilterTable, logicalNwChain, strconv.Itoa(i))
+				if err != nil {
+					break
+				}
+			}
+		}
+	}
+
+	err = iptablesCommandExec.ClearChain(FilterTable, npChain)
+	if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+		return fmt.Errorf("Error flushing network policy chain (%s) before deleting it: %v", npChain, err.Error())
+	}
+	err = iptablesCommandExec.DeleteChain(FilterTable, npChain)
+	if err != nil {
+		return fmt.Errorf("Error while deleting iptable chain %s for network policy %s: %v", npChain, name, err)
+	}
+
+	return nil
+}
+
+// ListNetworkPolicies lists the network policies which are to be imposed on the given logical network.
+// If no logical network name is given then select all the policies which have GenieNetwork Policy annotation
+func (npc *NetworkPolicyController) ListNetworkPolicies(lnwname string, namespace string) ([]NetworkPolicyInfo, error) {
+
+	policyInfo := make([]NetworkPolicyInfo, 0)
+
+	networkPolicies, err := npc.networkPoliciesLister.NetworkPolicies(namespace).List(labels.Everything())
+	if err != nil {
+		return nil, err
+	}
+
+	for _, policy := range networkPolicies {
+		if policy.Annotations == nil || policy.Annotations[GenieNetworkPolicy] == "" {
+			continue
+		}
+
+		networks, _ := getLogicalNetworksFromAnnotation(policy.Annotations[GenieNetworkPolicy])
+		if lnwname != "" {
+			if strings.Contains(policy.Annotations[GenieNetworkPolicy], lnwname) {
+				if networks[lnwname] != nil {
+					policyInfo = append(policyInfo, NetworkPolicyInfo{Name: policy.Name, Namespace: policy.Namespace, Networks: networks})
+				} else {
+					for _, peers := range networks {
+						for _, p := range peers {
+							if lnwname == strings.TrimSpace(p) {
+								policyInfo = append(policyInfo, NetworkPolicyInfo{Name: policy.Name, Namespace: policy.Namespace, Networks: nil})
+							}
+						}
+					}
+				}
+			} else {
+				continue
+			}
+		} else {
+			policyInfo = append(policyInfo, NetworkPolicyInfo{
+				Name:      policy.Name,
+				Namespace: policy.Namespace,
+				Networks:  networks,
+			})
+		}
+	}
+
+	return policyInfo, nil
+}
+
+func (npc *NetworkPolicyController) handleLogicalNetworkAdd(name, namespace string) error {
+	logicalNetwork, err := npc.logicalNwLister.LogicalNetworks(namespace).Get(name)
+	if err != nil {
+		return fmt.Errorf("Error while getting logical network %s:%s : %v", namespace, name, err)
+	}
+
+	policyInfo, err := npc.ListNetworkPolicies(name, namespace)
+	if err != nil {
+		glog.Errorf("Error in ListNetworkPolicies for logical network (%s): %v", name, err)
+	}
+
+	if len(policyInfo) != 0 {
+		iptablesCommandExec, err := iptables.New()
+		if err != nil {
+			glog.Errorf("Iptables command executer intialization failed: %v", err.Error())
+			return fmt.Errorf("Iptables command executer intialization failed: %v", err.Error())
+		}
+
+		for _, policy := range policyInfo {
+			policyChain := createIptableChainName(GeniePolicyPrefix, policy.Name+namespace)
+			if policy.Networks != nil {
+				lnChain := createIptableChainName(GenieNetworkPrefix, name+namespace)
+				err = iptablesCommandExec.NewChain("filter", lnChain)
+				if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+
+				rulespec := []string{"-d", logicalNetwork.Spec.SubSubnet, "-j", lnChain}
+				exists, err := iptablesCommandExec.Exists(FilterTable, ForwardChain, rulespec...)
+				if err != nil {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				if !exists {
+					err := iptablesCommandExec.Insert(FilterTable, ForwardChain, 1, rulespec...)
+					if err != nil {
+						glog.Errorf("Failed to execute iptables command: %v", err.Error())
+						return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+					}
+				}
+
+				exists, err = iptablesCommandExec.Exists(FilterTable, InputChain, rulespec...)
+				if err != nil {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				if !exists {
+					err := iptablesCommandExec.Insert(FilterTable, InputChain, 1, rulespec...)
+					if err != nil {
+						glog.Errorf("Failed to execute iptables command: %v", err.Error())
+						return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+					}
+				}
+
+				exists, err = iptablesCommandExec.Exists(FilterTable, OutputChain, rulespec...)
+				if err != nil {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				if !exists {
+					err := iptablesCommandExec.Insert(FilterTable, OutputChain, 1, rulespec...)
+					if err != nil {
+						glog.Errorf("Failed to execute iptables command: %v", err.Error())
+						return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+					}
+				}
+
+				rulespec = []string{"-j", "REJECT"}
+				err = iptablesCommandExec.AppendUnique(FilterTable, lnChain, rulespec...)
+				if err != nil {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+
+				if err != nil {
+					glog.Errorf("Error while geting network policies using %s as network selector: %v", err.Error())
+					return fmt.Errorf("Error while geting network policies using %s as network selector: %v", name, err)
+				}
+
+				rulespec = []string{"-j", policyChain}
+				exists, err = iptablesCommandExec.Exists(FilterTable, lnChain, rulespec...)
+				if err != nil {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				if !exists {
+					err := iptablesCommandExec.Insert(FilterTable, lnChain, 1, rulespec...)
+					if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+						glog.Errorf("Failed to execute iptables command: %v", err.Error())
+						return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+					}
+				}
+			}else {
+				rulespec := []string{"-s", logicalNetwork.Spec.SubSubnet, "-j", "ACCEPT"}
+				err := iptablesCommandExec.AppendUnique(FilterTable, policyChain, rulespec...)
+				if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+					glog.Errorf("Failed to execute iptables command: %v", err.Error())
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (npc *NetworkPolicyController) handleLogicalNetworkUpdate(name, namespace string) error {
+	logicalNetwork, err := npc.logicalNwLister.LogicalNetworks(namespace).Get(name)
+	if err != nil {
+		return fmt.Errorf("Error while getting logical network %s:%s : %v", namespace, name, err)
+	}
+
+	iptablesCommandExec, err := iptables.New()
+	if err != nil {
+		return fmt.Errorf("Iptables command executer intialization failed: %v", err.Error())
+	}
+
+	lnChain := createIptableChainName(GenieNetworkPrefix, name+namespace)
+
+	fwChainRules, err := iptablesCommandExec.List(FilterTable, ForwardChain)
+	if err != nil {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+	for pos, rule := range fwChainRules {
+		if strings.Contains(rule, lnChain) {
+			err = iptablesCommandExec.Delete(FilterTable, ForwardChain, strconv.Itoa(pos))
+			break
+		}
+	}
+	rulespec := []string{"-d", logicalNetwork.Spec.SubSubnet, "-j", lnChain}
+	err = iptablesCommandExec.Insert(FilterTable, ForwardChain, 1, rulespec...)
+	if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+
+	inChainRules, err := iptablesCommandExec.List(FilterTable, InputChain)
+	if err != nil {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+	for pos, rule := range inChainRules {
+		if strings.Contains(rule, lnChain) {
+			err = iptablesCommandExec.Delete(FilterTable, InputChain, strconv.Itoa(pos))
+			break
+		}
+	}
+	err = iptablesCommandExec.Insert(FilterTable, InputChain, 1, rulespec...)
+	if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+
+	outChainRules, err := iptablesCommandExec.List(FilterTable, OutputChain)
+	if err != nil {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+	for pos, rule := range outChainRules {
+		if strings.Contains(rule, lnChain) {
+			err = iptablesCommandExec.Delete(FilterTable, OutputChain, strconv.Itoa(pos))
+			break
+		}
+	}
+	err = iptablesCommandExec.Insert(FilterTable, OutputChain, 1, rulespec...)
+	if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+		return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+	}
+
+	return nil
+}
+
+func (npc *NetworkPolicyController) handleLogicalNetworkDelete(name, namespace, subnet string) error {
+	policyInfo, err := npc.ListNetworkPolicies(name, namespace)
+	if err != nil {
+		glog.Errorf("Error in ListNetworkPolicies for logical network (%s): %v", name, err)
+	}
+
+	if len(policyInfo) != 0 {
+		iptablesCommandExec, err := iptables.New()
+		if err != nil {
+			return fmt.Errorf("Iptables command executer intialization failed: %v", err.Error())
+		}
+
+		for _, policy := range policyInfo {
+			if policy.Networks != nil {
+				lnChain := createIptableChainName(GenieNetworkPrefix, name+namespace)
+
+				fwChainRules, err := iptablesCommandExec.List(FilterTable, ForwardChain)
+				if err != nil {
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				for pos, rule := range fwChainRules {
+					if strings.Contains(rule, lnChain) {
+						err = iptablesCommandExec.Delete(FilterTable, ForwardChain, strconv.Itoa(pos))
+						break
+					}
+				}
+
+				inChainRules, err := iptablesCommandExec.List(FilterTable, InputChain)
+				if err != nil {
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				for pos, rule := range inChainRules {
+					if strings.Contains(rule, lnChain) {
+						err = iptablesCommandExec.Delete(FilterTable, InputChain, strconv.Itoa(pos))
+						break
+					}
+				}
+
+				outChainRules, err := iptablesCommandExec.List(FilterTable, OutputChain)
+				if err != nil {
+					return fmt.Errorf("Failed to execute iptables command: %v", err.Error())
+				}
+				for pos, rule := range outChainRules {
+					if strings.Contains(rule, lnChain) {
+						err = iptablesCommandExec.Delete(FilterTable, OutputChain, strconv.Itoa(pos))
+						break
+					}
+				}
+
+				err = iptablesCommandExec.ClearChain(FilterTable, lnChain)
+				if err != nil && err.(*iptables.Error).ExitStatus() != 1 {
+					return fmt.Errorf("Error flushing logical network chain (%s) before deleting it: %v", lnChain, err.Error())
+				}
+				err = iptablesCommandExec.DeleteChain(FilterTable, lnChain)
+				if err != nil {
+					return fmt.Errorf("Error while deleting iptable chain for logical network %s : %v", name, err)
+				}
+			} else {
+				policyChain := createIptableChainName(GeniePolicyPrefix, policy.Name + policy.Namespace)
+				plcRules, err := iptablesCommandExec.List(FilterTable, policyChain)
+				if err != nil {
+					glog.Errorf("Failed to list rules for policy chain (%s) for policy (%s): %v", policyChain, policy.Name, err.Error())
+					continue
+				}
+				for pos, rule := range plcRules {
+					if strings.Contains(rule, subnet) {
+						err = iptablesCommandExec.Delete(FilterTable, policyChain, strconv.Itoa(pos))
+						if err != nil {
+							glog.Errorf("Failed to remove rule for subnet (%s) of logical network (%s:%s) from policy chain (%s) for policy (%s:%s): %v", subnet, namespace, name, policyChain, namespace, policy.Name, err)
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (npc *NetworkPolicyController) syncHandler(key string) error {
+
+	npc.mutex.Lock()
+	defer npc.mutex.Unlock()
+
+	glog.Infof("Starting syncHandler for key: %s", key)
+	keyaction, e := unmarshalKeyActionJson(key)
+	if e != nil {
+		return (fmt.Errorf("Error while unmarshalling action parameters: %v", e))
+	}
+
+	var err error
+	switch keyaction["kind"] {
+	case "networkpolicy":
+		switch keyaction["action"] {
+		case "ADD":
+			err = npc.handleNetworkPolicyAdd(keyaction["name"], keyaction["namespace"])
+
+		case "UPDATE":
+			err = npc.handleNetworkPolicyUpdate(keyaction["name"], keyaction["namespace"])
+
+		case "DELETE":
+			err = npc.handleNetworkPolicyDelete(keyaction["name"], keyaction["namespace"], keyaction["args"])
+
+		default:
+
+		}
+
+	case "logicalnetwork":
+		switch keyaction["action"] {
+		case "ADD":
+			err = npc.handleLogicalNetworkAdd(keyaction["name"], keyaction["namespace"])
+
+		case "UPDATE":
+			err = npc.handleLogicalNetworkUpdate(keyaction["name"], keyaction["namespace"])
+
+		case "DELETE":
+			err = npc.handleLogicalNetworkDelete(keyaction["name"], keyaction["namespace"], keyaction["args"])
+
+		default:
+		}
+	}
+
+	return err
 }
