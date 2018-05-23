@@ -27,8 +27,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Huawei-PaaS/CNI-Genie/plugins"
-	"github.com/Huawei-PaaS/CNI-Genie/utils"
+	"github.com/satyaranjanp/CNI-Genie/plugins"
+	"github.com/satyaranjanp/CNI-Genie/utils"
 	"github.com/containernetworking/cni/libcni"
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
