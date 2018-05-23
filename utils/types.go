@@ -16,11 +16,12 @@
 package utils
 
 import (
-	"github.com/containernetworking/cni/pkg/types"
-	c "github.com/google/cadvisor/info/v1"
-	v1 "github.com/projectcalico/cni-plugin/utils"
 	"net"
 	"time"
+
+	"github.com/containernetworking/cni/pkg/types"
+	c "github.com/google/cadvisor/info/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type ContainerInfoGenie struct {
@@ -54,41 +55,60 @@ type CNIArgs struct {
 	StdinData   []byte
 }
 
+// PolicyConfig is a struct to hold policy config
+type PolicyConfig struct {
+	PolicyType              string `json:"type"`
+	K8sAPIRoot              string `json:"k8s_api_root"`
+	K8sAuthToken            string `json:"k8s_auth_token"`
+	K8sClientCertificate    string `json:"k8s_client_certificate"`
+	K8sClientKey            string `json:"k8s_client_key"`
+	K8sCertificateAuthority string `json:"k8s_certificate_authority"`
+}
+
+// Kubernetes a K8s specific struct to hold config
+type KubernetesConfig struct {
+	K8sAPIRoot string `json:"k8s_api_root"`
+	Kubeconfig string `json:"kubeconfig"`
+}
+
 // NetConf stores the common network config for Calico CNI plugin
 type NetConf struct {
-	CNIVersion string `json:"cniVersion"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	IPAM       struct {
-		Name       string
-		Type       string   `json:"type"`
-		Subnet     string   `json:"subnet"`
-		AssignIpv4 *string  `json:"assign_ipv4"`
-		AssignIpv6 *string  `json:"assign_ipv6"`
-		IPv4Pools  []string `json:"ipv4_pools,omitempty"`
-		IPv6Pools  []string `json:"ipv6_pools,omitempty"`
-	} `json:"ipam,omitempty"`
-	MTU            int           `json:"mtu"`
-	Hostname       string        `json:"hostname"`
-	DatastoreType  string        `json:"datastore_type"`
-	EtcdAuthority  string        `json:"etcd_authority"`
-	EtcdEndpoints  string        `json:"etcd_endpoints"`
-	LogLevel       string        `json:"log_level"`
-	Policy         v1.Policy     `json:"policy"`
-	Kubernetes     v1.Kubernetes `json:"kubernetes"`
-	Args           v1.Args       `json:"args"`
-	EtcdScheme     string        `json:"etcd_scheme"`
-	EtcdKeyFile    string        `json:"etcd_key_file"`
-	EtcdCertFile   string        `json:"etcd_cert_file"`
-	EtcdCaCertFile string        `json:"etcd_ca_cert_file"`
-	Delegate       v1.Delegate   `json:"delegate"`
-	CalicoSubnet   string        `json:"calico_subnet"`
-	CanalSubnet    string        `json:"canal_subnet"`
-	WeaveSubnet    string        `json:"weave_subnet"`
+	CNIVersion     string                 `json:"cniVersion"`
+	Name           string                 `json:"name"`
+	Type           string                 `json:"type"`
+	IPAM           interface{}            `json:"ipam,omitempty"`
+	MTU            int                    `json:"mtu"`
+	Hostname       string                 `json:"hostname"`
+	DatastoreType  string                 `json:"datastore_type"`
+	EtcdAuthority  string                 `json:"etcd_authority"`
+	EtcdEndpoints  string                 `json:"etcd_endpoints"`
+	LogLevel       string                 `json:"log_level"`
+	Policy         PolicyConfig           `json:"policy"`
+	Kubernetes     KubernetesConfig       `json:"kubernetes"`
+	EtcdScheme     string                 `json:"etcd_scheme"`
+	EtcdKeyFile    string                 `json:"etcd_key_file"`
+	EtcdCertFile   string                 `json:"etcd_cert_file"`
+	EtcdCaCertFile string                 `json:"etcd_ca_cert_file"`
+	Delegate       map[string]interface{} `json:"delegate"`
+	CalicoSubnet   string                 `json:"calico_subnet"`
+	CanalSubnet    string                 `json:"canal_subnet"`
+	WeaveSubnet    string                 `json:"weave_subnet"`
+	Master         string                 `json:"master"`
+	Mode           string                 `json:"mode"`
+
+	Bridge           string `json:"bridge,omitempty"`
+	IsDefaultGateway bool   `json:"isDefaultGateway,omitempty"`
+	ForceAddress     bool   `json:"forceAddress,omitempty"`
+	IpMasq           bool   `json:"ipMasq,omitempty"`
+	HairpinMode      bool   `json:"hairpinMode,omitempty"`
+	IsGateway        bool   `json:"isGateway,omitempty"`
 
 	//added for romana
 	RomanaRoot       string `json:"romana_root"`
 	SegmentLabelName string `json:"segment_label_name"`
+
+	// CNI-Genie default plugin
+	DefaultPlugin string `json:"default_plugin"`
 }
 
 // K8sArgs is the valid CNI_ARGS used for Kubernetes
@@ -113,4 +133,48 @@ type MultiIPPreferences struct {
 type IPAddressPreferences struct {
 	Ip        string `json:"ip,omitempty"`
 	Interface string `json:"interface,omitempty"`
+}
+
+//Details of logical network info for user pod
+type LogicalNetwork struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	apiVersion string `json:"apiVersion"`
+	Spec struct {
+		PhysicalNet string `json:"physicalNet,omitempty"`
+		SubSubnet   string `json:"sub_subnet,omitempty"`
+		Plugin      string `json:"plugin,omitempty"`
+	} `json:"spec"`
+}
+
+// LogicalNetworkList is a list of LogicalNetworkList resource
+type LogicalNetworkList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata"`
+
+	Items []LogicalNetwork `json:"items"`
+}
+
+
+//Details of physical network info for user pod
+type PhysicalNetwork struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	apiVersion string `json:"apiVersion"`
+	Spec struct {
+		ReferNic     string `json:"refer_nic"`
+		SharedStatus struct {
+			Plugin          string `json:"plugin,omitempty"`
+			Subnet          string `json:"subnet,omitempty"`
+			DedicatedStatus bool   `json:"dedicatedNet"`
+		} `json:"sharedStatus"`
+	} `json:"spec"`
+}
+
+//Details of plugin info for user pod
+type PluginInfo struct {
+	PluginName string
+	IfName     string
+	Subnet     string
+	Refer_nic  string
 }
