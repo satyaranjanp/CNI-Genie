@@ -30,7 +30,7 @@ after_success:
   - echo $DOCKER_PASSWORD
   - export TAG=`if [ "$TRAVIS_BRANCH" == "master" ]; then echo "latest"; else echo $TRAVIS_BRANCH ; fi`
   - echo $TAG
-  - docker login -u="satya" -p="satya5290siku" quay.io/satya/genie-plugin
+  - docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD" quay.io/satya/genie-plugin
   - docker build -t cnigenie -f conf/1.5/Dockerfile .
   - docker tag cnigenie:latest $REPO:$TAG
   - docker tag cnigenie:latest $REPO:$TRAVIS_BUILD_NUMBER
