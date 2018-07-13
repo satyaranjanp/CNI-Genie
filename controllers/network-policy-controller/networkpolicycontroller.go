@@ -285,10 +285,22 @@ func (npc *NetworkPolicyController) getCidrFromNetwork(name, namespace string) (
 
 }
 
+type AsSelector struct {
+	PolicyName string
+	PolicyNamespace string
+}
+
+type AsPeer struct {
+	PolicyName string
+	PolicyNamespace string
+	SelectorNetworks []string
+}
+
 type NetworkPolicyInfo struct {
-	Name      string
-	Namespace string
-	Networks  map[string][]string
+	PolicyName      string
+	PolicyNamespace string
+	AsSelector bool
+	AsPeer []string
 }
 
 func unmarshalKeyActionJson(key string) (map[string]string, error) {
@@ -300,7 +312,17 @@ func unmarshalKeyActionJson(key string) (map[string]string, error) {
 	return keyaction, nil
 }
 
-func getLogicalNetworksFromAnnotation(annotation string, getPeers bool) (map[string][]string, error) {
+func parsePeers (peers string) string {
+	peer := strings.Split(peers, ",")
+	var ret string
+	for _, p := range peer {
+		ret += strings.TrimSpace(p)
+	}
+
+	return ret
+}
+
+func getLogicalNetworksFromAnnotation(annotation string) (map[string][]string, error) {
 	networkPolicies := make([]NetworkPolicy, 0)
 	policyNetworkMap := make(map[string][]string)
 
@@ -310,22 +332,35 @@ func getLogicalNetworksFromAnnotation(annotation string, getPeers bool) (map[str
 		return nil, fmt.Errorf("Error while unmarshalling annotation: %v", err)
 	}
 
-	if getPeers == true {
-		for _, policy := range networkPolicies {
-			if policy.NetworkSelector != "" {
-				policyNetworkMap[policy.NetworkSelector] = append(policyNetworkMap[policy.NetworkSelector], strings.Split(policy.PeerNetworks, ",")...)
-			}
+	for _, policy := range networkPolicies {
+		nwSelector := strings.TrimSpace(policy.NetworkSelector)
+		if nwSelector != "" {
+			policyNetworkMap[nwSelector] = append(policyNetworkMap[policy.NetworkSelector], strings.Split(parsePeers(policy.PeerNetworks), ",")...)
 		}
-	} else {
-		for _, policy := range networkPolicies {
-			if policy.NetworkSelector != "" {
-				policyNetworkMap[policy.NetworkSelector] = append(policyNetworkMap[policy.NetworkSelector], []string{" "}...)
-			}
+	}
+	glog.V(4).Infof("Unmarshalled logical network map from annotation: %+v", policyNetworkMap)
+	return policyNetworkMap, nil
+}
+
+func getNetworkInfoFromAnnotation(annotation, nwName string) (NetworkPolicyInfo, error) {
+	networkPolicies := make([]NetworkPolicy, 0)
+	glog.V(4).Infof("Unmarshalling annotation: %s", annotation)
+	err := json.Unmarshal([]byte(annotation), &networkPolicies)
+	if err != nil {
+		return nil, fmt.Errorf("Error while unmarshalling annotation: %v", err)
+	}
+
+	networkInfo := NetworkPolicyInfo{}
+	for _, policyRule := range networkPolicies {
+		peers := parsePeers(policyRule.PeerNetworks)
+		if strings.Contains("," + peers + ",", "," + nwName + ",") {
+			networkInfo.AsPeer = append(networkInfo.AsPeer, strings.TrimSpace(policyRule.NetworkSelector))
+		} else if nwName == policyRule.NetworkSelector && false == networkInfo.AsSelector {
+			networkInfo.AsSelector = true
 		}
 	}
 
-	glog.V(4).Infof("Unmarshalled logical network map from annotation: %+v", policyNetworkMap)
-	return policyNetworkMap, nil
+	return networkInfo, nil
 }
 
 func (npc *NetworkPolicyController) populatePolicyChain(name, namespace string, networks map[string][]string) ([]string, error) {
@@ -413,7 +448,7 @@ func (npc *NetworkPolicyController) handleNetworkPolicyAdd(policyName, policyNam
 		return fmt.Errorf("Failed to get network policy object %s in namespace %s: %v", policyName, policyNamespace, err)
 	}
 
-	networks, err := getLogicalNetworksFromAnnotation(networkPolicy.Annotations[GenieNetworkPolicy], true)
+	networks, err := getLogicalNetworksFromAnnotation(networkPolicy.Annotations[GenieNetworkPolicy])
 	if err != nil {
 		return fmt.Errorf("Error while unmarshalling logical networks info from annotation of policy object %s: %v", networkPolicy.Name, err)
 	}
@@ -434,7 +469,7 @@ func (npc *NetworkPolicyController) handleNetworkPolicyUpdate(policyName, policy
 		return fmt.Errorf("Failed to get network policy object %s in namespace %s: %v", policyName, policyNamespace, err)
 	}
 
-	networks, err := getLogicalNetworksFromAnnotation(networkPolicy.Annotations[GenieNetworkPolicy], true)
+	networks, err := getLogicalNetworksFromAnnotation(networkPolicy.Annotations[GenieNetworkPolicy])
 	if err != nil {
 		return fmt.Errorf("Error while unmarshalling logical networks info from annotation of policy object %s: %v", networkPolicy.Name, err)
 	}
@@ -485,9 +520,7 @@ func (npc *NetworkPolicyController) handleNetworkPolicyDelete(policyName, policy
 // ListNetworkPolicies lists the network policies which are to be imposed on the given logical network.
 // If no logical network name is given then select all the policies which have GenieNetwork Policy annotation
 func (npc *NetworkPolicyController) ListNetworkPolicies(lnwname string, namespace string) ([]NetworkPolicyInfo, error) {
-
 	policyInfo := make([]NetworkPolicyInfo, 0)
-
 	networkPolicies, err := npc.networkPoliciesLister.NetworkPolicies(namespace).List(labels.Everything())
 	if err != nil {
 		return nil, err
@@ -498,22 +531,19 @@ func (npc *NetworkPolicyController) ListNetworkPolicies(lnwname string, namespac
 			continue
 		}
 
-		networks, err := getLogicalNetworksFromAnnotation(policy.Annotations[GenieNetworkPolicy], true)
+		networkInfo, err := getNetworkInfoFromAnnotation(policy.Annotations[GenieNetworkPolicy], lnwname)
 		if err != nil {
 			glog.Errorf("Error parsing logical network info from annotation: %v", err)
 			continue
 		}
 
-		if networks[lnwname] != nil {
-			policyInfo = append(policyInfo, NetworkPolicyInfo{Name: policy.Name, Namespace: policy.Namespace, Networks: networks})
-		} else {
-			for _, peers := range networks {
-				for _, p := range peers {
-					if lnwname == strings.TrimSpace(p) {
-						policyInfo = append(policyInfo, NetworkPolicyInfo{Name: policy.Name, Namespace: policy.Namespace, Networks: nil})
-					}
-				}
-			}
+		if networkInfo.AsSelector == true || len(networkInfo.AsPeer) > 0 {
+			policyInfo = append(policyInfo, NetworkPolicyInfo{
+								PolicyName: policy.Name,
+								PolicyNamespace: policy.Namespace,
+								AsSelector: networkInfo.AsSelector,
+								AsPeer: networkInfo.AsPeer,
+							})
 		}
 	}
 
@@ -548,34 +578,16 @@ func (npc *NetworkPolicyController) handleLogicalNetworkAdd(name, namespace stri
 
 	if len(policyInfo) != 0 {
 		for _, policy := range policyInfo {
-			policyChain := iptables.CreatePolicyChainName(policy.Name, policy.Namespace, name)
+			policyChain := iptables.CreatePolicyChainName(policy.PolicyName, policy.PolicyNamespace, name)
 			// If it is a selector network
-			if policy.Networks != nil {
-				lnChain, err := npc.iptable.AddNetworkChain(logicalNetwork)
-				if err != nil {
-					return fmt.Errorf("Error adding network chain for logical network (%s:%s): %v", namespace, name, err)
-				}
+			if policy.AsSelector == true {
+
 				rulespec := []string{"-j", policyChain}
 				err = npc.iptable.InsertRule(lnChain, 1, rulespec)
 				if err != nil {
 					return fmt.Errorf("Error adding rule (%s) for policy object (%s:%s) in network chain (%s) for logical network (%s:%s): %v", policyChain, policy.Namespace, policy.Name, lnChain, namespace, name, err)
 				}
-				
-				// Add rules for peer networks in the corresponding policy chain
-				for _, peer := range policy.Networks[name] {
-					if peer = strings.TrimSpace(peer); peer != "" {
-						peerNw, err := npc.logicalNwLister.LogicalNetworks(namespace).Get(peer)
-						if err != nil {
-							glog.Errorf("Error while getting peer logical network (%s:%s) to add rule in policy chain (%s): %v", namespace, peer, policyChain, err)
-							continue
-						}
-						err = npc.insertPeerRule(policyChain, peerNw.Spec.SubSubnet)
-						if err != nil {
-							glog.Errorf("Error adding rule (subnet: %s) for peer network (%s:%s) in policy chain (%s) wrt selector logical network (%s:%s): %v", peerNw.Spec.SubSubnet, peerNw.Namespace, peerNw.Name, policyChain, namespace, name)
-						}
-					}
-				}
-			} else /* it is a peer network*/ {
+			} else /* it is a peer network */ {
 				if npc.iptable.ExistsChain(policyChain) {
 					err = npc.insertPeerRule(policyChain, logicalNetwork.Spec.SubSubnet)
 					if err != nil {
