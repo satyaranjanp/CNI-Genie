@@ -71,6 +71,26 @@ type KubernetesConfig struct {
 	Kubeconfig string `json:"kubeconfig"`
 }
 
+type GenieConf struct {
+	NetConf
+	Kubernetes KubernetesConfig       `json:"kubernetes"`
+	Policy         PolicyConfig           `json:"policy"`
+	LogLevel       string                 `json:"log_level"`
+	// CNI-Genie default plugin
+	DefaultPlugin string `json:"default_plugin"`
+	// Address to reach at cadvisor. By default, http://127.0.0.1:4194 is used as CAdvisor address
+	CAdvisorAddr string `json:"cAdvisor_address"`
+}
+
+type NetConf struct {
+	types.NetConf
+}
+
+type NetConfList struct {
+	types.NetConfList
+}
+
+/*
 // NetConf stores the common network config for Calico CNI plugin
 type NetConf struct {
 	CNIVersion     string                 `json:"cniVersion"`
@@ -113,7 +133,7 @@ type NetConf struct {
 	// Address to reach at cadvisor. By default, http://127.0.0.1:4194 is used as CAdvisor address
 	CAdvisorAddr string `json:"cAdvisor_address"`
 }
-
+*/
 // K8sArgs is the valid CNI_ARGS used for Kubernetes
 type K8sArgs struct {
 	types.CommonArgs
