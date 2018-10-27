@@ -18,7 +18,6 @@ package genie
 This class enables cni-genie to check network usage interface wise on a node.
 In other words, it primarily computes network usage for each of the CNS on a
 given node i.e. what is the network usage of weave, flannel etc.
-
 It returns CNS that has least load on it. So that, cni-genie can configure
 networking on the CNS with least load.
 */
@@ -112,9 +111,7 @@ func httpGetJsonData(data, postData interface{}, url, infoName string) error {
 /**
 This method returns string array of network solutions with ascending order of downlink usage.
 eg: flannel=350, calico=250, weave=150
-
 It returns {weave, calico, flannel}
-
 */
 func computeNetworkUsage(cinfo []ContainerStatsGenie) string {
 	//default ranks of usage
@@ -169,7 +166,7 @@ Returns network solution that has least load
 	- conf : Netconf info having genie configurations
 	- numStats : int (number of stats needed default 3)
 */
-func GetCNSOrderByNetworkBandwith(conf NetConf) (string, error) {
+func GetCNSOrderByNetworkBandwith(conf GenieConf) (string, error) {
 	cAdvisorURL := getCAdvisorAddr(conf)
 
 	cinfo, err := GetDockerContainers(fmt.Sprintf("%s/api/v1.3/", cAdvisorURL), nil)
@@ -187,7 +184,7 @@ func GetCNSOrderByNetworkBandwith(conf NetConf) (string, error) {
 Returns cAdvisor Address to collect network usage parameters
 	- conf : Netconf info having genie configurations
 */
-func getCAdvisorAddr(conf NetConf) string {
+func getCAdvisorAddr(conf GenieConf) string {
 	conf.CAdvisorAddr = strings.TrimSpace(conf.CAdvisorAddr)
 	if conf.CAdvisorAddr == "" {
 		return DefaultCAdvisorPath

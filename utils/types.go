@@ -21,6 +21,7 @@ import (
 
 	"github.com/containernetworking/cni/pkg/types"
 	c "github.com/google/cadvisor/info/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type ContainerInfoGenie struct {
@@ -70,6 +71,26 @@ type KubernetesConfig struct {
 	Kubeconfig string `json:"kubeconfig"`
 }
 
+type GenieConf struct {
+	NetConf
+	Kubernetes KubernetesConfig       `json:"kubernetes"`
+	Policy         PolicyConfig           `json:"policy"`
+	LogLevel       string                 `json:"log_level"`
+	// CNI-Genie default plugin
+	DefaultPlugin string `json:"default_plugin"`
+	// Address to reach at cadvisor. By default, http://127.0.0.1:4194 is used as CAdvisor address
+	CAdvisorAddr string `json:"cAdvisor_address"`
+}
+
+type NetConf struct {
+	types.NetConf
+}
+
+type NetConfList struct {
+	types.NetConfList
+}
+
+/*
 // NetConf stores the common network config for Calico CNI plugin
 type NetConf struct {
 	CNIVersion     string                 `json:"cniVersion"`
@@ -94,25 +115,21 @@ type NetConf struct {
 	WeaveSubnet    string                 `json:"weave_subnet"`
 	Master         string                 `json:"master"`
 	Mode           string                 `json:"mode"`
-
 	Bridge           string `json:"bridge,omitempty"`
 	IsDefaultGateway bool   `json:"isDefaultGateway,omitempty"`
 	ForceAddress     bool   `json:"forceAddress,omitempty"`
 	IpMasq           bool   `json:"ipMasq,omitempty"`
 	HairpinMode      bool   `json:"hairpinMode,omitempty"`
 	IsGateway        bool   `json:"isGateway,omitempty"`
-
 	//added for romana
 	RomanaRoot       string `json:"romana_root"`
 	SegmentLabelName string `json:"segment_label_name"`
-
 	// CNI-Genie default plugin
 	DefaultPlugin string `json:"default_plugin"`
-
 	// Address to reach at cadvisor. By default, http://127.0.0.1:4194 is used as CAdvisor address
 	CAdvisorAddr string `json:"cAdvisor_address"`
 }
-
+*/
 // K8sArgs is the valid CNI_ARGS used for Kubernetes
 type K8sArgs struct {
 	types.CommonArgs
@@ -140,33 +157,37 @@ type IPAddressPreferences struct {
 
 //Details of logical network info for user pod
 type LogicalNetwork struct {
-	apiVersion string `json:"apiVersion"`
-	Metadata   struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-	} `json:"metadata"`
-	Spec struct {
-		PhysicalNet string `json:"physicalNet,omitempty"`
-		SubSubnet   string `json:"sub_subnet,omitempty"`
-		Plugin      string `json:"plugin,omitempty"`
-	} `json:"spec"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	apiVersion        string `json:"apiVersion"`
+	Spec              struct {
+				  PhysicalNet string `json:"physicalNet,omitempty"`
+				  SubSubnet   string `json:"sub_subnet,omitempty"`
+				  Plugin      string `json:"plugin,omitempty"`
+			  } `json:"spec"`
+}
+
+// LogicalNetworkList is a list of LogicalNetworkList resource
+type LogicalNetworkList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata"`
+
+	Items []LogicalNetwork `json:"items"`
 }
 
 //Details of physical network info for user pod
 type PhysicalNetwork struct {
-	apiVersion string `json:"apiVersion"`
-	Metadata   struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace,omitempty"`
-	} `json:"metadata"`
-	Spec struct {
-		ReferNic     string `json:"refer_nic"`
-		SharedStatus struct {
-			Plugin          string `json:"plugin,omitempty"`
-			Subnet          string `json:"subnet,omitempty"`
-			DedicatedStatus bool   `json:"dedicatedNet"`
-		} `json:"sharedStatus"`
-	} `json:"spec"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	apiVersion        string `json:"apiVersion"`
+	Spec              struct {
+				  ReferNic     string `json:"refer_nic"`
+				  SharedStatus struct {
+						       Plugin          string `json:"plugin,omitempty"`
+						       Subnet          string `json:"subnet,omitempty"`
+						       DedicatedStatus bool   `json:"dedicatedNet"`
+					       } `json:"sharedStatus"`
+			  } `json:"spec"`
 }
 
 //Details of plugin info for user pod

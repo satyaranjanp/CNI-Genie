@@ -6,6 +6,9 @@
 GO_PATH=$(GOPATH)
 SRCFILES=cni-genie.go
 TEST_SRCFILES=$(wildcard *_test.go)
+DEPS = $(SRCFILES) \
+       genie/* \
+       networkcrd/* 
 
 # Ensure that the dist directory is always created
 MAKE_SURE_DIST_EXIST := $(shell mkdir -p dist)
@@ -25,7 +28,7 @@ clean:
 release: clean
 
 # Build the genie cni plugin
-dist/genie: $(SRCFILES)
+dist/genie: $(DEPS)
 	@GOPATH=$(GO_PATH) CGO_ENABLED=0 go build -v -i -o dist/genie \
 	-ldflags "-X main.VERSION=1.0 -s -w" cni-genie.go
 
