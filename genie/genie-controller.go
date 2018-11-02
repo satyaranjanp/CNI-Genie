@@ -40,7 +40,7 @@ import (
 	api "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"github.com/Huawei-PaaS/CNI-Genie/networkcrd"
+
 )
 
 const (
@@ -105,10 +105,11 @@ func AddPodNetwork(cniArgs utils.CNIArgs, conf utils.GenieConf) (types.Result, e
 	}
 
 	podAnnot, err := GetPodAnnotationsForCNI(kubeClient, k8sArgs)
+
 	if networkAnnot, ok := podAnnot[NetworkAttachmentDefinitionAnnot]; ok == true {
-		return networkcrd.AddNetwork(kubeClient, cniArgs, k8sArgs.K8S_POD_NAMESPACE, networkAnnot)
+		return AddCRDNetwork(kubeClient, cniArgs, string(k8sArgs.K8S_POD_NAMESPACE), networkAnnot, DefaultNetDir)
 	} else {
-		return AddNetwork(kubeClient, k8sArgs, conf, cniArgs)
+		return AddNetwork(kubeClient, k8sArgs, conf, cniArgs, podAnnot)
 	}
 }
 
@@ -132,12 +133,22 @@ func DeletePodNetwork(cniArgs utils.CNIArgs, conf utils.GenieConf) error {
 		return fmt.Errorf("CNI Genie error at GetKubeClient: %v", err)
 	}
 
+	podAnnot, err := GetPodAnnotationsForCNI(kubeClient, k8sArgs)
+
+	if networkAnnot, ok := podAnnot[NetworkAttachmentDefinitionAnnot]; ok == true {
+		return DeleteCRDNetwork(kubeClient, cniArgs, string(k8sArgs.K8S_POD_NAMESPACE), networkAnnot, DefaultNetDir)
+	} else {
+		return DeleteNetwork(kubeClient, k8sArgs, conf, cniArgs, podAnnot)
+	}
+}
+
+func DeleteNetwork(kubeClient *kubernetes.Clientset, k8sArgs utils.K8sArgs, conf utils.GenieConf, cniArgs utils.CNIArgs, podAnnots map[string]string) error {
 	// parse pod annotations for cns types
 	// eg:
 	//    cni: "canal,weave"
-	annots, err := ParsePodAnnotationsForCNI(kubeClient, k8sArgs, conf)
+	annots, err := parseCNIAnnotations(podAnnots, kubeClient, k8sArgs, conf)
 	if err != nil {
-		return fmt.Errorf("CNI Genie error at ParsePodAnnotations: %v", err)
+		return nil, fmt.Errorf("CNI Genie error at ParsePodAnnotations: %v", err)
 	}
 
 	var newErr error
@@ -161,7 +172,7 @@ func DeletePodNetwork(cniArgs utils.CNIArgs, conf utils.GenieConf) error {
 	return nil
 }
 
-func AddNetwork(kubeClient *kubernetes.Clientset, k8sArgs utils.K8sArgs, conf utils.GenieConf, cniArgs utils.CNIArgs) (types.Result, error) {
+func AddNetwork(kubeClient *kubernetes.Clientset, k8sArgs utils.K8sArgs, conf utils.GenieConf, cniArgs utils.CNIArgs, podAnnots map[string]string) (types.Result, error) {
 	// Collect the result in this variable - this is ultimately what gets "returned" by this function by printing
 	// it to stdout.
 	var endResult types.Result
@@ -169,7 +180,7 @@ func AddNetwork(kubeClient *kubernetes.Clientset, k8sArgs utils.K8sArgs, conf ut
 	// parse pod annotations for cns types
 	// eg:
 	//    cni: "canal,weave"
-	annots, err := ParsePodAnnotationsForCNI(kubeClient, k8sArgs, conf)
+	annots, err := parseCNIAnnotations(podAnnots, kubeClient, k8sArgs, conf)
 	if err != nil {
 		return nil, fmt.Errorf("CNI Genie error at ParsePodAnnotations: %v", err)
 	}
@@ -341,7 +352,7 @@ func GetPodAnnotationsForCNI(client *kubernetes.Clientset, k8sArgs utils.K8sArgs
 	return annot, err
 
 }
-
+/* Remove this code segment
 //ParsePodAnnotationsForCNI does following tasks
 //  - get pod definition
 //  - parses annotation section for "cni"
@@ -372,7 +383,7 @@ func ParsePodAnnotationsForCNI(client *kubernetes.Clientset, k8sArgs utils.K8sAr
 
 	return annots, err
 
-}
+}*/
 
 // ParsePodAnnotationsForMultiIPPrefs does following tasks
 // - get pod definition
@@ -600,7 +611,7 @@ func addNetwork(intfName string, pluginInfo utils.PluginInfo, cniArgs utils.CNIA
 	cniName := strings.TrimSpace(pluginInfo.PluginName)
 	fmt.Fprintf(os.Stderr, "CNI Genie cniName=%v intfName =%v\n", cniName, intfName)
 
-	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf", ".conflist"})
+	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf", ".json", ".conflist"})
 	fmt.Fprintf(os.Stderr, "CNI Genie files =%v\n", files)
 	if err != nil {
 		return nil, err
@@ -669,10 +680,10 @@ func addNetwork(intfName string, pluginInfo utils.PluginInfo, cniArgs utils.CNIA
 
 	fmt.Fprintf(os.Stderr, "CNI Genie cni type= %s\n", cniType)
 
-	return DelegateAddNetwork(cniArgs, netConfigList, intfName)
+	return delegateAddNetwork(cniArgs, netConfigList, intfName)
 }
 
-func DelegateAddNetwork(cniArgs utils.CNIArgs, netConfigList *libcni.NetworkConfigList, intfName string) (types.Result, error) {
+func delegateAddNetwork(cniArgs utils.CNIArgs, netConfigList *libcni.NetworkConfigList, intfName string) (types.Result, error) {
 	err := os.Unsetenv("CNI_IFNAME")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "CNI Genie Error while unsetting env variable CNI_IFNAME: %v\n", err)
@@ -698,7 +709,7 @@ func DelegateAddNetwork(cniArgs utils.CNIArgs, netConfigList *libcni.NetworkConf
 func deleteNetwork(intfName string, cniName string, cniArgs utils.CNIArgs) error {
 	var conf *libcni.NetworkConfigList
 
-	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf"})
+	files, err := libcni.ConfFiles(DefaultNetDir, []string{".conf", ".json", "conflist"})
 	fmt.Fprintf(os.Stderr, "CNI Genie files =%v\n", files)
 	switch {
 	case err != nil:
@@ -712,14 +723,14 @@ func deleteNetwork(intfName string, cniName string, cniArgs utils.CNIArgs) error
 		if strings.Contains(confFile, "-"+cniName+".") && cniName != "" {
 			confFromFile, err := ParseCNIConfFromFile(confFile)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "CNI Genie Error loading CNI config file =%v\n", confFile, err)
+				fmt.Fprintf(os.Stderr, "CNI Genie Error loading CNI config file (%s) =%v\n", confFile, err)
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "CNI Genie cniName file found!!!!!! confFromFile.Type =%v\n", confFromFile.Plugins[0].Network.Type)
 
 			conf = confFromFile
 			fmt.Fprintf(os.Stderr, "CNI Genie cni type= %s\n", conf.Plugins[0].Network.Type)
-			err = DelegateDeleteNetwork(cniArgs, conf, intfName)
+			err = delegateDeleteNetwork(cniArgs, conf, intfName)
 			if err != nil {
 				return err
 			}
@@ -730,7 +741,7 @@ func deleteNetwork(intfName string, cniName string, cniArgs utils.CNIArgs) error
 	return nil
 }
 
-func DelegateDeleteNetwork(cniArgs utils.CNIArgs, netConfigList *libcni.NetworkConfigList, intfName string) (error) {
+func delegateDeleteNetwork(cniArgs utils.CNIArgs, netConfigList *libcni.NetworkConfigList, intfName string) (error) {
 	rtConf, err := runtimeConf(cniArgs, intfName)
 	if err != nil {
 		return fmt.Errorf("CNI Genie couldn't convert cniArgs to RuntimeConf: %v\n", err)

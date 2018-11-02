@@ -1,19 +1,20 @@
 package networkcrd
 
 import (
-	"github.com/containernetworking/cni/pkg/types"
+
 	"strings"
 	"encoding/json"
 	"fmt"
 	"k8s.io/client-go/kubernetes"
 	//	"regexp"
 	//	"errors"
-	"github.com/containernetworking/cni/libcni"
-	"github.com/Huawei-PaaS/CNI-Genie/utils"
-	. "github.com/Huawei-PaaS/CNI-Genie/genie"
 	"net"
-	"strconv"
 	"os"
+	"github.com/containernetworking/cni/libcni"
+)
+
+const (
+	DefaultCNIDir = "/etc/cni/net.d"
 )
 
 /*func validateName(name string) error {
@@ -68,25 +69,27 @@ func parseNetworkInfoFromAnnot(network *NetworkSelectionElement, annot string) {
 	}
 }
 
-func getNetworkInfo(annotation string) ([]NetworkSelectionElement, error) {
+func GetNetworkInfo(annotation string) ([]NetworkSelectionElement, error) {
 	var networks []NetworkSelectionElement
 	if true == strings.ContainsAny(annotation, "[{") {
+		fmt.Fprintln(os.Stderr,"CNI Genie GetNetworkInfo in true == strings.ContainsAny(annotation, [{/)")
 		err := json.Unmarshal([]byte(annotation), &networks)
 		if err != nil {
 			return nil, fmt.Errorf("Error unmarshalling network annotation: %v", err)
 		}
 
 		for _, network := range networks {
-			if err = validateFields(network); err != nil {
+			if err = validateFields(&network); err != nil {
 				return nil, fmt.Errorf("Error in validation: %v", err)
 			}
 		}
 	} else {
+		fmt.Fprintln(os.Stderr,"CNI Genie GetNetworkInfo in else part")
 		nw := strings.Split(annotation, ",")
 		for _, n := range nw {
 			var network NetworkSelectionElement
 			parseNetworkInfoFromAnnot(&network, n)
-
+			fmt.Fprintf(os.Stderr,"CNI Genie GetNetworkInfo after parseNetworkInfoFromAnnot: %v\n", network)
 			if err := validateFields(&network); err != nil {
 				return nil, fmt.Errorf("Error in validation: %v", err)
 			}
@@ -94,7 +97,7 @@ func getNetworkInfo(annotation string) ([]NetworkSelectionElement, error) {
 			networks = append(networks, network)
 		}
 	}
-
+	fmt.Fprintf(os.Stderr,"CNI Genie GetNetworkInfo networks: %v\n", networks)
 	return networks, nil
 }
 
@@ -128,9 +131,14 @@ func insertOptionalParameters(net *NetworkSelectionElement, conf map[string]inte
 	return nil
 }
 
-func getPluginConf(net *NetworkSelectionElement, networkCrd *NetworkAttachmentDefinition) ([]byte, error) {
+func GetConfFromFile(networkCrd *NetworkAttachmentDefinition, cniDir string) (*libcni.NetworkConfigList, error) {
+	return libcni.LoadConfList(networkCrd.Name, cniDir)
+}
+
+func GetConfFromSpec(net *NetworkSelectionElement, networkCrd *NetworkAttachmentDefinition) (*libcni.NetworkConfigList, error) {
 	conf := make(map[string]interface{})
-	configbytes := []byte{networkCrd.Spec.Config}
+	fmt.Fprintf(os.Stderr,"CNI Genie GetPluginConf networkCrd.Spec.Config: %v\n", networkCrd.Spec.Config)
+	configbytes := []byte(networkCrd.Spec.Config)
 
 	err := json.Unmarshal(configbytes, &conf)
 	if err != nil {
@@ -148,8 +156,8 @@ func getPluginConf(net *NetworkSelectionElement, networkCrd *NetworkAttachmentDe
 		marshalRequired = true
 	}
 
-	if net.IPRequest != "" || net.MacRequest != "" {
-		err := insertOptionalParameters(net, conf["plugins"].([]interface{})[0])
+	if len(net.IPRequest) > 0 || net.MacRequest != "" {
+		err := insertOptionalParameters(net, conf["plugins"].([]interface{})[0].(map[string]interface{}))
 		if err != nil {
 			return nil, fmt.Errorf("Error inserting optional parameters in plugin configuration: %v", err)
 		}
@@ -166,16 +174,22 @@ func getPluginConf(net *NetworkSelectionElement, networkCrd *NetworkAttachmentDe
 		return confbytes, nil
 	}
 
-	return configbytes, nil
+	netConfigList, err := libcni.ConfListFromBytes(configbytes)
+	if err != nil {
+		return nil, fmt.Errorf("Error getting conflist from bytes: %v", err)
+	}
+
+	return netConfigList, nil
 }
 
-func getNetworkCRDOnbject(kubeClient *kubernetes.Clientset, name, namespace string) (*NetworkAttachmentDefinition, error) {
+func GetNetworkCRDObject(kubeClient *kubernetes.Clientset, name, namespace string) (*NetworkAttachmentDefinition, error) {
 	path := fmt.Sprintf("/apis/k8s.cni.cncf.io/v1/namespaces/%s/network-attachment-definitions/%s", namespace, name)
+	fmt.Fprintf(os.Stderr,"CNI Genie GetNetworkCRDObject path: %v\n", path)
 	obj, err := kubeClient.ExtensionsV1beta1().RESTClient().Get().AbsPath(path).DoRaw()
 	if err != nil {
 		return nil, fmt.Errorf("Error performing GET request: %v", err)
 	}
-
+	fmt.Fprintf(os.Stderr,"CNI Genie GetNetworkCRDObject raw object: %v\n", obj)
 	networkcrd := &NetworkAttachmentDefinition{}
 	err = json.Unmarshal(obj, networkcrd)
 	if err != nil {
@@ -185,50 +199,3 @@ func getNetworkCRDOnbject(kubeClient *kubernetes.Clientset, name, namespace stri
 	return networkcrd, nil
 }
 
-func AddNetwork(kubeClient *kubernetes.Clientset, cniArgs utils.CNIArgs, namespace, annotation string) (types.Result, error) {
-	networks, err := getNetworkInfo(annotation)
-	if err != nil {
-		return nil, fmt.Errorf("Error parsing network selection annotation: %v", err)
-	}
-
-	var endResult types.Result
-	var newErr []error
-	for i, net := range networks {
-		if net.Namespace == "" {
-			net.Namespace = namespace
-		}
-
-		networkcrd, err := getNetworkCRDOnbject(kubeClient, net.Name, net.Namespace)
-		if err != nil {
-			newErr = append(newErr, fmt.Errorf("Error getting network crd object (%s:%s): %v", net.Namespace, net.Name, err))
-		}
-
-		// check for eth name
-
-		pluginConf, err := getPluginConf(&net, &networkcrd)
-		if err != nil {
-			newErr = append(newErr,fmt.Errorf("Error extracting plugin configuration from network object (%s:%s): %v", net.Namespace, net.Name, err))
-		}
-		netConfigList, err := libcni.ConfListFromBytes(pluginConf)
-		if err != nil {
-			newErr = append(newErr, fmt.Errorf("Error creating network configuration list for network object (%s:%s): %v", net.Namespace, net.Name, err))
-		}
-
-		var intfName string
-		if net.InterfaceRequest != "" {
-			intfName = net.InterfaceRequest
-		} else {
-			intfName = "eth" + strconv.Itoa(i)
-		}
-		result, err := DelegateAddNetwork(cniArgs, netConfigList, intfName)
-		fmt.Fprintf(os.Stderr, "CNI Genie addNetwork via network crd err *** %v; result***  %v\n", err, result)
-		if result != nil {
-			endResult, err = MergeResult(result, endResult)
-			if err != nil {
-				newErr = append(newErr, fmt.Errorf("Error merging result with end result for network object (%s:%s): %v", net.Namespace, net.Name, err))
-			}
-		}
-	}
-
-	return endResult, nil
-}
