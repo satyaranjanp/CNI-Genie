@@ -56,6 +56,8 @@ const (
 	SupportedPlugins = "bridge, calico, canal, flannel, macvlan, Romana, sriov, weave"
 	// DefaultIfNamePrefix specifies the default prefix to be used while generating interface names
 	DefaultIfNamePrefix = "eth"
+	// NetworkAttachmentDefinitionAnnot specifies the pod Network Attachment Selection Annotation
+	NetworkAttachmentDefinitionAnnot = "k8s.v1.cni.cncf.io/networks"
 )
 
 // PopulateCNIArgs wraps skel.CmdArgs into Genie's native CNIArgs format.
@@ -106,6 +108,10 @@ func AddPodNetwork(cniArgs utils.CNIArgs, conf utils.GenieConf) (types.Result, e
 	// Get pod annotations
 	podAnnot, err := getPodAnnotationsForCNI(kubeClient, k8sArgs)
 
+	if networkAnnot, ok := podAnnot[NetworkAttachmentDefinitionAnnot]; ok == true {
+		return addNetworkByCrdSpec(kubeClient, cniArgs, string(k8sArgs.K8S_POD_NAMESPACE), networkAnnot, DefaultNetDir)
+	}
+
 	return addNetworkByConf(kubeClient, k8sArgs, conf, cniArgs, podAnnot)
 }
 
@@ -130,6 +136,9 @@ func DeletePodNetwork(cniArgs utils.CNIArgs, conf utils.GenieConf) error {
 	}
 
 	podAnnot, err := getPodAnnotationsForCNI(kubeClient, k8sArgs)
+	if networkAnnot, ok := podAnnot[NetworkAttachmentDefinitionAnnot]; ok == true {
+		return deleteNetworkByCrdSpec(kubeClient, cniArgs, string(k8sArgs.K8S_POD_NAMESPACE), networkAnnot, DefaultNetDir)
+	}
 
 	return deleteNetworkByConf(kubeClient, k8sArgs, conf, cniArgs, podAnnot)
 }
