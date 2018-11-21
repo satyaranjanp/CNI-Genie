@@ -26,7 +26,6 @@ import (
 	//"os/exec"
 	//"strings"
 	"github.com/Huawei-PaaS/CNI-Genie/utils"
-	"strconv"
 	"strings"
 )
 
@@ -65,31 +64,30 @@ func GetPluginInfoFromPhysicalNw(phyNwName string, namespace string, client *kub
 Returns the list of plugins intended by user through network crd
 	- annot : pod annotation received
 */
-func GetPluginInfoFromNwAnnot(networkAnnot string, namespace string, client *kubernetes.Clientset) ([]utils.PluginInfo, error) {
-	var pluginInfoList []utils.PluginInfo
+func GetPluginInfoFromNwAnnot(networkAnnot string, namespace string, client *kubernetes.Clientset) ([]*utils.PluginInfo, error) {
+	files, err := getConfFiles(DefaultNetDir)
+	if err != nil {
+		return nil, err
+	}
+
 	var networkName string
 
 	logicalNwList := strings.Split(networkAnnot, ",")
 	usedIntfMap := make(map[string]bool)
-	i := 0
 	pluginInfo := utils.PluginInfo{}
-
+	pluginInfoList := make([]*utils.PluginInfo, 0, len(logicalNwList))
 	for _, logicalNw := range logicalNwList {
 		if true == strings.Contains(logicalNw, ":") {
 			netNIfName := strings.Split(logicalNw, ":")
 			networkName = netNIfName[0]
 			pluginInfo.IfName = netNIfName[1]
+			if usedIntfMap[pluginInfo.IfName] == false {
+				usedIntfMap[netNIfName[1]] = true
+			} else {
+				return nil, fmt.Errorf("Repeatitive request for same interface name: %s", pluginInfo.IfName)
+			}
 		} else {
 			networkName = logicalNw
-			for {
-				nic := "eth" + strconv.Itoa(i)
-				if usedIntfMap[nic] == false {
-					pluginInfo.IfName = nic
-					usedIntfMap[nic] = true
-					break
-				}
-				i++
-			}
 		}
 
 		logicalNwPath := fmt.Sprintf("/apis/alpha.network.k8s.io/v1/namespaces/%s/logicalnetworks/%s", namespace,
@@ -120,7 +118,19 @@ func GetPluginInfoFromNwAnnot(networkAnnot string, namespace string, client *kub
 		}
 		fmt.Fprintf(os.Stderr, "CNI Genie pluginInfoList pluginInfo=%v\n", pluginInfo)
 
-		pluginInfoList = append(pluginInfoList, pluginInfo)
+		pluginInfo.Config, err = loadPluginConfig(&files, pluginInfo.PluginName)
+		if err != nil {
+			return nil, fmt.Errorf("Error loading plugin configuration for plugin (%s) for logical network (%s:%s): %v", pluginInfo.PluginName, namespace, networkName, err)
+		}
+
+		if pluginInfo.Subnet != "" {
+			confbytes, err := useCustomSubnet(pluginInfo.Config.Plugins[0].Bytes, pluginInfo.Subnet)
+			if err != nil {
+				return nil, fmt.Errorf("Error while inserting custom subnet into plugin configuration: %v", err)
+			}
+			pluginInfo.Config.Plugins[0].Bytes = confbytes
+		}
+		pluginInfoList = append(pluginInfoList, &pluginInfo)
 	}
 	fmt.Fprintf(os.Stderr, "CNI Genie pluginInfoList =%v\n", pluginInfoList)
 	return pluginInfoList, nil
