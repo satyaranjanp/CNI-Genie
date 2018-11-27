@@ -27,6 +27,13 @@ rules:
       - get
       - update
   - apiGroups:
+      - "k8s.cni.cncf.io"
+    resources:
+      - network-attachment-definitions
+    verbs:
+      - get
+      - update
+  - apiGroups:
       - ""
     resources:
       - nodes
