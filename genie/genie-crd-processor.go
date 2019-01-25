@@ -34,7 +34,7 @@ import (
 Returns the list of plugins intended by user through physical network crd
 	- annot : pod annotation received
 */
-func GetPluginInfoFromPhysicalNw(phyNwName string, namespace string, client *kubernetes.Clientset, pluginInfo *utils.PluginInfo) error {
+func GetPluginInfoFromPhysicalNw(phyNwName string, namespace string, client *kubernetes.Clientset, pluginInfo utils.PluginInfo) (utils.PluginInfo, error) {
 	physicalNwPath := fmt.Sprintf("/apis/alpha.network.k8s.io/v1/namespaces/%s/physicalnetworks/%s", namespace, phyNwName)
 
 	//fmt.Fprintf(os.Stderr, "CNI Genie networks out =%v, err=%v\n", out, err)
@@ -42,12 +42,12 @@ func GetPluginInfoFromPhysicalNw(phyNwName string, namespace string, client *kub
 	physicalNwObj, err := client.ExtensionsV1beta1().RESTClient().Get().AbsPath(physicalNwPath).DoRaw()
 
 	if err != nil {
-		return fmt.Errorf("CNI Genie failed to get physical network object for the network %v, namespace %v\n", phyNwName, namespace)
+		return pluginInfo, fmt.Errorf("CNI Genie failed to get physical network object for the network %v, namespace %v\n", phyNwName, namespace)
 	}
 
 	physicalNwInfo := utils.PhysicalNetwork{}
 	if err = json.Unmarshal(physicalNwObj, &physicalNwInfo); err != nil {
-		return fmt.Errorf("CNI Genie failed to physical network info: %v", err)
+		return pluginInfo, fmt.Errorf("CNI Genie failed to physical network info: %v", err)
 	}
 	pluginInfo.Refer_nic = physicalNwInfo.Spec.ReferNic
 	fmt.Fprintf(os.Stderr, "CNI Genie physicalNwInfo=%v\n", physicalNwInfo)
@@ -57,32 +57,39 @@ func GetPluginInfoFromPhysicalNw(phyNwName string, namespace string, client *kub
 	}
 
 	pluginInfo.Subnet = physicalNwInfo.Spec.SharedStatus.Subnet
-	fmt.Fprintf(os.Stderr, "CNI Genie pluginInfo =%v\n", *pluginInfo)
-	return nil
+	fmt.Fprintf(os.Stderr, "CNI Genie pluginInfo =%v\n", pluginInfo)
+	return pluginInfo, nil
 }
 
 /**
 Returns the list of plugins intended by user through network crd
 	- annot : pod annotation received
 */
-func GetPluginInfoFromNwAnnot(networkAnnot string, namespace string, client *kubernetes.Clientset) ([]*utils.PluginInfo, error) {
-	files, err := getConfFiles(DefaultNetDir)
-	if err != nil {
-		return nil, err
-	}
-
+func GetPluginInfoFromNwAnnot(networkAnnot string, namespace string, client *kubernetes.Clientset) ([]utils.PluginInfo, error) {
+	var pluginInfoList []utils.PluginInfo
 	var networkName string
 
 	logicalNwList := strings.Split(networkAnnot, ",")
-	pluginInfoList := make([]*utils.PluginInfo, 0, len(logicalNwList))
+	usedIntfMap := make(map[string]bool)
+	i := 0
+	pluginInfo := utils.PluginInfo{}
+
 	for _, logicalNw := range logicalNwList {
-		pluginInfo := new(utils.PluginInfo)
 		if true == strings.Contains(logicalNw, ":") {
 			netNIfName := strings.Split(logicalNw, ":")
-			networkName = strings.TrimSpace(netNIfName[0])
-			pluginInfo.IfName = strings.TrimSpace(netNIfName[1])
+			networkName = netNIfName[0]
+			pluginInfo.IfName = netNIfName[1]
 		} else {
-			networkName = strings.TrimSpace(logicalNw)
+			networkName = logicalNw
+			for {
+				nic := "eth" + strconv.Itoa(i)
+				if usedIntfMap[nic] == false {
+					pluginInfo.IfName = nic
+					usedIntfMap[nic] = true
+					break
+				}
+				i++
+			}
 		}
 
 		logicalNwPath := fmt.Sprintf("/apis/alpha.network.k8s.io/v1/namespaces/%s/logicalnetworks/%s", namespace,
@@ -92,48 +99,29 @@ func GetPluginInfoFromNwAnnot(networkAnnot string, namespace string, client *kub
 		logicalNwObj, err := client.ExtensionsV1beta1().RESTClient().Get().AbsPath(logicalNwPath).DoRaw()
 
 		if err != nil {
-			return pluginInfoList, fmt.Errorf("CNI Genie failed to get logical network object for the network %v, namespace %v\n", networkName, namespace)
+			return pluginInfoList, fmt.Errorf("CNI Genie failed to get logical network object for the network %v, namespace %v\n", networkAnnot, namespace)
 		}
 
 		logicalNwInfo := utils.LogicalNetwork{}
 		if err = json.Unmarshal(logicalNwObj, &logicalNwInfo); err != nil {
-			return pluginInfoList, fmt.Errorf("CNI Genie failed to logical network (%s:%s) info: %v", namespace, networkName, err)
+			return pluginInfoList, fmt.Errorf("CNI Genie failed to logical network info: %v", err)
 		}
 
 		if logicalNwInfo.Spec.PhysicalNet == "" {
-			if logicalNwInfo.Spec.Plugin != "" {
-				pluginInfo.PluginName = logicalNwInfo.Spec.Plugin
-			} else {
-				return pluginInfoList, fmt.Errorf("CNI Genie failed to find physical network mapping in logical network %v, "+"namespace %v\n",
-					networkName, namespace)
-			}
-		} else {
-			err = GetPluginInfoFromPhysicalNw(logicalNwInfo.Spec.PhysicalNet, namespace, client, pluginInfo)
-			if err != nil {
-				return pluginInfoList, fmt.Errorf("CNI Genie failed to get plugin info from physical network object for the network %v, namespace %v\n",
-					networkName, namespace)
-			}
+			return pluginInfoList, fmt.Errorf("CNI Genie failed to find physical network mapping in logical network %v, "+"namespace %v\n",
+				networkName, namespace)
 		}
+		pluginInfo.PluginName = logicalNwInfo.Spec.Plugin
 
-		if logicalNwInfo.Spec.SubSubnet != "" {
+		pluginInfo, err := GetPluginInfoFromPhysicalNw(logicalNwInfo.Spec.PhysicalNet, namespace, client, pluginInfo)
+
+		if logicalNwInfo.Spec.PhysicalNet == "" {
 			pluginInfo.Subnet = logicalNwInfo.Spec.SubSubnet
 		}
-		fmt.Fprintf(os.Stderr, "CNI Genie pluginInfoList pluginInfo=%v\n", *pluginInfo)
+		fmt.Fprintf(os.Stderr, "CNI Genie pluginInfoList pluginInfo=%v\n", pluginInfo)
 
-		pluginInfo.Config, err = loadPluginConfig(&files, pluginInfo.PluginName)
-		if err != nil {
-			return nil, fmt.Errorf("Error loading plugin configuration for plugin (%s) for logical network (%s:%s): %v", pluginInfo.PluginName, namespace, networkName, err)
-		}
-
-		if pluginInfo.Subnet != "" {
-			confbytes, err := useCustomSubnet(pluginInfo.Config.Plugins[0].Bytes, pluginInfo.Subnet)
-			if err != nil {
-				return nil, fmt.Errorf("Error while inserting custom subnet into plugin configuration: %v", err)
-			}
-			pluginInfo.Config.Plugins[0].Bytes = confbytes
-		}
 		pluginInfoList = append(pluginInfoList, pluginInfo)
 	}
-
+	fmt.Fprintf(os.Stderr, "CNI Genie pluginInfoList =%v\n", pluginInfoList)
 	return pluginInfoList, nil
 }

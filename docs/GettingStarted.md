@@ -7,13 +7,14 @@
 * Docker installed
 * Kubernetes cluster running with CNI enabled
   * One easy way to bring up a cluster is to use [kubeadm](https://kubernetes.io/docs/getting-started-guides/kubeadm/): 
-            
+      * We tested on Kubernetes 1.5, 1.6, 1.7, 1.8
+      
       Till 1.7 version:
       ```
       $ kubeadm init --use-kubernetes-version=v1.7.0 --pod-network-cidr=10.244.0.0/16
       ```
 
-      1.8 version onwards:
+      For 1.8 version:
       ```
       $ kubeadm init --pod-network-cidr=10.244.0.0/16
       ```
@@ -31,7 +32,7 @@
       $ kubectl taint nodes --all dedicated-
       ```
 
-      For 1.8 version onwards, run:
+      For 1.8 version, run:
       ```
       $ kubectl taint nodes --all node-role.kubernetes.io/master-
       ```
@@ -42,33 +43,45 @@
   * Use this [link](https://www.weave.works/docs/net/latest/kube-addon/) to install Weave      
   * Use this [link](https://github.com/coreos/flannel/blob/master/Documentation/kube-flannel.yml) to install Flannel
 
-### Installing genie components
+### Installing genie
 
 We install genie as a Docker Container on every node
 
-#### *Till Kubernetes 1.7 version:*
+Till Kubernetes 1.7 version: 
 ```
 $ kubectl apply -f https://raw.githubusercontent.com/Huawei-PaaS/CNI-Genie/master/conf/1.5/genie.yaml
 ```
 
-#### *Kubernetes 1.8 version onwards:*
-
-CNI-Genie can be installed in the following two modes:
-
-*Genie Complete (Installs genie with the support of multi networking as well as network policy implementation):*
+For Kubernetes 1.8 version:
 ```
-$ kubectl apply -f https://raw.githubusercontent.com/Huawei-PaaS/CNI-Genie/master/conf/1.8/genie-complete.yaml
+$ kubectl apply -f https://raw.githubusercontent.com/Huawei-PaaS/CNI-Genie/master/conf/1.8/genie.yaml
+```
+### Making changes to and build from source
+
+Note that you should install genie first before making changes to the source. This ensures genie conf file is generated successfully.
+
+After making changes to source, build genie binary by running:
+```
+$ make all
+```
+Place "genie" binary from dest/ into /opt/cni/bin/ directory.
+```
+$ cp dist/genie /opt/cni/bin/genie
 ```
 
-*Genie Plugin-only (Installs genie with multi networking support):*
+### Test process
+
+To run ginkgo tests for CNI-Genie run the following command:
+
+If Kubernetes cluster is 1.7+
 ```
-$ kubectl apply -f https://raw.githubusercontent.com/Huawei-PaaS/CNI-Genie/master/conf/1.8/genie-plugin.yaml
+$ make test testKubeVersion=1.7 testKubeConfig=/root/admin.conf
 ```
 
-### Building, Testing, Making changes to source code
-
-Refer to our [Developer's Guide](developer-guide.md) section.
-
+If Kubernetes cluster is 1.5.x
+```
+$ make test testKubeVersion=1.5
+```
 
 ### Genie Logs
 
@@ -82,8 +95,9 @@ $ tail -f /var/log/syslog | grep 'CNI'
 
 ### Troubleshooting
 
-* Note: on a single node cluster, after your Kubernetes master is initialized successfully, make sure you are able to schedule pods on the master by running:
+* Note: one a single node cluster, after your Kubernetes master is initialized successfully, make sure you are able to schedule pods on the master by running:
 ```
 $ kubectl taint nodes --all node-role.kubernetes.io/master-
 ```
-* Note: most plugins use differenet installation files for different Kuberenetes versions. Make sure you use the right one!
+* Note: most plugins use differenet installation files for Kuberenetes 1.5, 1.6, 1.7 & 1.8. Make sure you use the right one!
+

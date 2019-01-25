@@ -36,11 +36,6 @@ import (
 	"strings"
 )
 
-const (
-	// DefaultCAdvisorPath specifies the default address at which CAdvisor is running
-	DefaultCAdvisorPath = "http://127.0.0.1:4194"
-)
-
 // Client represents the base URL for a cAdvisor client.
 type Client struct {
 	baseUrl    string
@@ -166,11 +161,13 @@ func computeNetworkUsage(cinfo []ContainerStatsGenie) string {
 
 /**
 Returns network solution that has least load
-	- conf : Netconf info having genie configurations
+	- cAdvisorURL : http://127.0.0.1:4194 or http://<nodeip>:4194/api/v1.3
 	- numStats : int (number of stats needed default 3)
 */
-func GetCNSOrderByNetworkBandwith(conf GenieConf) (string, error) {
-	cAdvisorURL := getCAdvisorAddr(conf)
+func GetCNSOrderByNetworkBandwith(cAdvisorURL string) (string, error) {
+	if cAdvisorURL == "" {
+		return "", fmt.Errorf("cAdvisorURL is empty. Should be eg: http://127.0.0.1:4194")
+	}
 
 	cinfo, err := GetDockerContainers(fmt.Sprintf("%s/api/v1.3/", cAdvisorURL), nil)
 	if err != nil {
@@ -181,16 +178,4 @@ func GetCNSOrderByNetworkBandwith(conf GenieConf) (string, error) {
 	res := computeNetworkUsage(cinfo)
 	fmt.Fprintf(os.Stderr, "CAdvisor Client response = %v\n", res)
 	return res, nil
-}
-
-/**
-Returns cAdvisor Address to collect network usage parameters
-	- conf : Netconf info having genie configurations
-*/
-func getCAdvisorAddr(conf GenieConf) string {
-	conf.CAdvisorAddr = strings.TrimSpace(conf.CAdvisorAddr)
-	if conf.CAdvisorAddr == "" {
-		return DefaultCAdvisorPath
-	}
-	return conf.CAdvisorAddr
 }

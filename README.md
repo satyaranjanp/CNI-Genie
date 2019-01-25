@@ -6,7 +6,7 @@ CNI-Genie enables container orchestrators ([Kubernetes](https://github.com/kuber
 3. 'specialized' CNI plugins, e.g., [SR-IOV](https://github.com/hustcat/sriov-cni), DPDK (work-in-progress)
 4. any generic CNI plugin of choice installed on the host
 
-Without CNI-Genie, the orchestrator is bound to only a single CNI plugin. E.g., for the case of Kubernetes, without CNI-Genie, kubelet is bound to only a single CNI plugin passed to kubelet on start. CNI-Genie allows for the co-existance of multiple CNI plugins  in runtime. 
+Without CNI-Genie, the orchestrator is bound to only a single CNI plugin. E.g., for the case of Kubernetes, without CNI-Genie, kubelet is bound to only a signle CNI plugin passed to kubelet on start. CNI-Genie allows for the co-existance of multiple CNI plugins  in runtime. 
 
 [![Build Status](https://travis-ci.org/Huawei-PaaS/CNI-Genie.svg)](https://travis-ci.org/Huawei-PaaS/CNI-Genie)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Huawei-PaaS/CNI-Genie)](https://goreportcard.com/report/github.com/Huawei-PaaS/CNI-Genie)
@@ -45,28 +45,22 @@ CNI Genie is an add-on to [Kuberenets](https://github.com/kubernetes/kubernetes)
 
 [Watch multi-NICs per 'pod' demo](https://github.com/Huawei-PaaS/CNI-Genie/blob/master/docs/multiple-ips/README.md#feature-2-extension-cni-genie-multiple-ip-addresses-per-pod) (IP addresses assigned not only to the container, but also to the Pod)
 
-3. [Network Attachment Definition](docs/network-attachment-definitions/README.md). CNI-Genie supports [NPWG Multi-Network Specification v1](https://github.com/K8sNetworkPlumbingWG/multi-net-spec) style network attachment to pods, where pods can be assigned IP according to network-attachment-definition CRD objects created by user.
 
-4. The user can leave the CNI plugin selection to CNI-Genie. CNI-Genie watches the Key Performance Indicator (KPI) that is of interest to the user and [selects the CNI plugin](docs/smart-cni-genie/README.md), accordingly.
+3. The user can leave the CNI plugin selection to CNI-Genie. CNI-Genie watches the Key Performance Indicator (KPI) that is of interest to the user and [selects the CNI plugin](docs/smart-cni-genie/README.md), accordingly.
     - CNI Genie watches KPI(s) of interest for existing CNI plugins, e.g., occupancy rate, number of subnets, latency, bandwidth
 
 [Watch Smart CNI Plugin Selection demo](https://github.com/Huawei-PaaS/CNI-Genie/blob/master/docs/smart-cni-genie/README.md#demo)
 
 
-5. [Default plugin support](docs/default-plugin/README.md). Another useful feature from genie. Using this, we can ensure to get ip address(es) for a pod by selecting default set of plugins
-
-
-6. Network isolation, i.e.,
+4. Network isolation, i.e.,
     - Dedicated 'physical' network for a tenant
     - Isolated 'logical' networks for different tenants on a shared 'physical'network
 
-    Usecase : [Obtaining Pod Ip address from customized subnet](docs/network-isolation/README.md)
+
+5. [CNI-Genie network policy engine](docs/network-policy/README.md) for network level ACLs
 
 
-7. [CNI-Genie network policy engine](docs/network-policy/README.md) for network level ACLs
-
-
-8. Real-time switching between different (physical or logical) networks for a given workload. This allows for
+6. Real-time switching between different (physical or logical) networks for a given workload. This allows for
     - Price minimization: dynamically switching workload to a cheaper network as network prices change    
     - Maximizing network utilization: dynamically switching workload to the less congested network at a threshold
     
@@ -77,4 +71,3 @@ CNI Genie is an add-on to [Kuberenets](https://github.com/kubernetes/kubernetes)
 Note: CNI-Genie itself is NOT a routing solution! It makes a call to CNI plugins that provide routing service
 
 ### More docs here [Getting started](docs/GettingStarted.md), [CNI-Genie Feature Set](docs/CNIGenieFeatureSet.md)
-
