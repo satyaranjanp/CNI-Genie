@@ -3,6 +3,9 @@ language: go
 
 go:
   - master
+  - 1.8.x
+
+script: make test
 
 # TODO (Karun): This works only if travis has k8s environment. Hence commenting it for now.
 #install:
@@ -18,7 +21,6 @@ services:
 
 env:
   global:
-    - REPO=quay.io/satya/genie-plugin
 
 after_success:
   - docker --version
@@ -29,9 +31,3 @@ after_success:
   - echo $DOCKER_USERNAME
   - echo $DOCKER_PASSWORD
   - export TAG=`if [ "$TRAVIS_BRANCH" == "master" ]; then echo "latest"; else echo $TRAVIS_BRANCH ; fi`
-  - echo $TAG
-  - docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD" quay.io/satya/genie-plugin
-  - docker build -t cnigenie -f conf/1.5/Dockerfile .
-  - docker tag cnigenie:latest $REPO:$TAG
-  - docker tag cnigenie:latest $REPO:$TRAVIS_BUILD_NUMBER
-  - docker push $REPO

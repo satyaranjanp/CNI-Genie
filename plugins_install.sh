@@ -48,9 +48,15 @@ Install_Calico() {
   if [ "$status" == "$desiredState" ]; then
     echo "Calico already running"
   else
-    kubectl apply -f https://docs.projectcalico.org/v2.6/getting-started/kubernetes/installation/hosted/kubeadm/1.6/calico.yaml
+    kubectl apply -f https://docs.projectcalico.org/v3.0/getting-started/kubernetes/installation/hosted/kubeadm/1.7/calico.yaml
     echo "Calico is started"
   fi
+}
+
+# CAdvisor will be used to get network usage statistics to support smart plugin selection
+Install_CAdvisor() {
+  docker rm $(docker ps -q -f status=exited)
+  sudo docker run --volume=/:/rootfs:ro --volume=/var/run:/var/run:rw --volume=/sys:/sys:ro --volume=/var/lib/docker/:/var/lib/docker:ro --publish=4194:4194 --detach=true --name=cadvisor google/cadvisor:latest --logtostderr --port=4194
 }
 
 Delete_AllPlugins() {
@@ -68,6 +74,7 @@ Plugins_CNI()
   Install_Weave
   Install_Romana
   Install_Calico
+  Install_CAdvisor
   while [ $elapsedSeconds -lt $maxWaitSeconds ]
   do
     if [ $isFlannelUp == false ]; then
