@@ -28,7 +28,7 @@ func SortedKeys(m map[string]int) []string {
 	sm.m = m
 	sm.s = make([]string, len(m))
 	i := 0
-	for key := range m {
+	for key, _ := range m {
 		sm.s[i] = key
 		i++
 	}
